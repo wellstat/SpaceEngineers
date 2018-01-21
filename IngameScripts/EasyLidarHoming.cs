@@ -15,7 +15,7 @@ int missileLaunchType = 0;
 int missileDetachPortType = 0;
 
 //Spin Missile By This RPM After Launch Clearance
-int spinAmount = 0;
+float spinAmount = 0;
 
 //Whether to perform a vertical takeoff for the launching procedure
 bool verticalTakeoff = false;
@@ -282,6 +282,8 @@ void Main(string arguments, UpdateType updateSource)
             {
                 ProcessCustomConfiguration();
             }
+
+            if (spinAmount > 0) spinAmount *= MathHelper.RPMToRadiansPerSecond;
 
             if (raycastAheadCount > 0 && raycastAheadSeconds == 0f)
             {
@@ -1175,7 +1177,7 @@ void CalculateParameters()
         naturalGravityLength = naturalGravity.Length();
         naturalGravity = (naturalGravityLength > 0 ? naturalGravity / naturalGravityLength : Vector3D.Zero);
 
-        rpm = velocity.AngularVelocity.Dot(refWorldMatrix.Forward) * RPM_FACTOR;
+        rpm = Math.Abs(velocity.AngularVelocity.Dot(refWorldMatrix.Forward)) * MathHelper.RadiansPerSecondToRPM;
     }
     else
     {
@@ -1260,7 +1262,7 @@ void CalculateTargetParameters()
     targetVector = Vector3D.TransformNormal(targetVector, refViewMatrixUnclean4thCol);
     targetVector.Normalize();
 
-    if (Double.IsNaN(targetVector.Sum))
+    if (double.IsNaN(targetVector.Sum))
     {
         targetVector = Vector3D.Forward;
     }
@@ -1504,6 +1506,7 @@ bool CheckAndSetValidLidarTarget(ref MyDetectedEntityInfo entityInfo, ref Matrix
         lidarTargetInfo = entityInfo;
         lastTargetPositionClock = clock;
 
+        targetPosition = entityInfo.Position;
         targetPositionSet  = true;
 
         return true;
@@ -1803,7 +1806,7 @@ void AimAtNaturalGravity()
     gravityVector.SetDim(1, 0);
     gravityVector.Normalize();
 
-    if (Double.IsNaN(gravityVector.Sum))
+    if (double.IsNaN(gravityVector.Sum))
     {
         gravityVector = Vector3D.Forward;
     }
@@ -1962,7 +1965,7 @@ bool MatchDetachPortTag(IMyTerminalBlock block)
 IMyTerminalBlock GetClosestBlockFromReference(List<IMyTerminalBlock> checkBlocks, IMyTerminalBlock referenceBlock, bool sameGridCheck = false)
 {
     IMyTerminalBlock checkBlock = null;
-    double prevCheckDistance = Double.MaxValue;
+    double prevCheckDistance = double.MaxValue;
 
     for (int i = 0; i < checkBlocks.Count; i++)
     {
@@ -2013,7 +2016,7 @@ bool ParseMatrix(string[] tokens, out MatrixD parsedMatrix, int start = 0, bool 
 
     for (int i = start; i < start + r.Length; i++)
     {
-        if (Double.TryParse(tokens[i], out v))
+        if (double.TryParse(tokens[i], out v))
         {
             r[i] = v;
         }
@@ -2042,7 +2045,7 @@ bool ParseVector(string[] tokens, out Vector3D parsedVector, int start = 0)
 
     double result;
 
-    if (Double.TryParse(tokens[start], out result))
+    if (double.TryParse(tokens[start], out result))
     {
         parsedVector.SetDim(0, result);
     }
@@ -2051,7 +2054,7 @@ bool ParseVector(string[] tokens, out Vector3D parsedVector, int start = 0)
         return false;
     }
 
-    if (Double.TryParse(tokens[start + 1], out result))
+    if (double.TryParse(tokens[start + 1], out result))
     {
         parsedVector.SetDim(1, result);
     }
@@ -2060,7 +2063,7 @@ bool ParseVector(string[] tokens, out Vector3D parsedVector, int start = 0)
         return false;
     }
 
-    if (Double.TryParse(tokens[start + 2], out result))
+    if (double.TryParse(tokens[start + 2], out result))
     {
         parsedVector.SetDim(2, result);
     }
@@ -2082,7 +2085,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
 
     if (coordinates.StartsWith("GPS") && tokens.Length >= 5)
     {
-        if (Double.TryParse(tokens[2], out result))
+        if (double.TryParse(tokens[2], out result))
         {
             parsedVector.SetDim(0, result);
         }
@@ -2091,7 +2094,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
             return false;
         }
 
-        if (Double.TryParse(tokens[3], out result))
+        if (double.TryParse(tokens[3], out result))
         {
             parsedVector.SetDim(1, result);
         }
@@ -2100,7 +2103,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
             return false;
         }
 
-        if (Double.TryParse(tokens[4], out result))
+        if (double.TryParse(tokens[4], out result))
         {
             parsedVector.SetDim(2, result);
         }
@@ -2113,7 +2116,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
     }
     else if (coordinates.StartsWith("[T:") && tokens.Length >= 4)
     {
-        if (Double.TryParse(tokens[1], out result))
+        if (double.TryParse(tokens[1], out result))
         {
             parsedVector.SetDim(0, result);
         }
@@ -2122,7 +2125,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
             return false;
         }
 
-        if (Double.TryParse(tokens[2], out result))
+        if (double.TryParse(tokens[2], out result))
         {
             parsedVector.SetDim(1, result);
         }
@@ -2131,7 +2134,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
             return false;
         }
 
-        if (Double.TryParse(tokens[3].Substring(0, tokens[3].Length - 1), out result))
+        if (double.TryParse(tokens[3].Substring(0, tokens[3].Length - 1), out result))
         {
             parsedVector.SetDim(2, result);
         }
@@ -2229,7 +2232,7 @@ void ProcessSingleConfigCommand(string[] tokens)
     if (cmdToken.Equals("MODE") && tokens.Length >= 2)
     {
         int modeValue;
-        if (Int32.TryParse(tokens[1], out modeValue))
+        if (int.TryParse(tokens[1], out modeValue))
         {
             missileLaunchType = modeValue;
         }
@@ -2253,7 +2256,7 @@ void ProcessSingleConfigCommand(string[] tokens)
     else if (cmdToken.Equals("V_LS") && tokens.Length >= 2)
     {
         double lsValue;
-        if (Double.TryParse(tokens[1], out lsValue))
+        if (double.TryParse(tokens[1], out lsValue))
         {
             launchSeconds = lsValue;
         }
@@ -2308,10 +2311,10 @@ void ProcessSingleConfigCommand(string[] tokens)
     }
     else if (cmdToken.Equals("SPIN") && tokens.Length >= 2)
     {
-        double spinValue;
-        if (Double.TryParse(tokens[1], out spinValue))
+        float spinValue;
+        if (float.TryParse(tokens[1], out spinValue))
         {
-            spinAmount = (int)spinValue;
+            spinAmount = spinValue * MathHelper.RPMToRadiansPerSecond;
         }
     }
     else if (cmdToken.Equals("CHECK") || cmdToken.Equals("CHECKMISSILE"))
@@ -2898,7 +2901,8 @@ void ProcessSingleMissileCommand(string[] tokens)
     }
     else if (cmdToken.Equals("SPIN") && tokens.Length >= 1)
     {
-        gyroControl.SetGyroRoll(tokens.Length >= 2 ? Int32.Parse(tokens[1]) : 30);
+        spinAmount = (tokens.Length >= 2 ? float.Parse(tokens[1]) : 30f) * MathHelper.RPMToRadiansPerSecond;
+        gyroControl.SetGyroRoll(spinAmount);
     }
 }
 
