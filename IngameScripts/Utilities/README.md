@@ -3,7 +3,7 @@
 This folder contains code snippets and helper classes to be included into other ingame scripts.
 
 
-## RaycastManager.cs
+## RaycastTracker.cs
 
 Helper class for managing raycast lock-on. Camera selection, raycast frequency, cooldown based on distance, and lock lost re-lock attempts are all automatically managed.
 
@@ -11,15 +11,15 @@ Helper class for managing raycast lock-on. Camera selection, raycast frequency, 
 
 Class is to be instantiated with the constructor. Example below:
 ```
-RaycastManager raycastManager = new RaycastManager(cameras);
+RaycastTracker raycastTracker = new RaycastTracker(cameras);
 ```
 ***cameras** is a list extracted from GridTerminalSystem as **List\<IMyCameraBlock\>***
 
 ### Update Every Script Run
 
-The RaycastManager **MUST** have its **Update()** method called every script loop at **Update1 Frequency**. No more, no less.
+The RaycastTracker **MUST** have its **Update()** method called every script loop at **Update1 Frequency**. No more, no less.
 ```
-raycastManager.Update();
+raycastTracker.Update();
 ```
 *Preferably called near the start of the script.*
 
@@ -31,16 +31,16 @@ For initial aiming, the following 2 methods can be used:
 
 **StartTrackingByPosition()** - Start tracking by attempting to lock on to a specific coordinate. Example below:
 ```
-raycastManager.StartTrackingByPosition(targetPosition);
-raycastManager.StartTrackingByPosition(targetPosition, detectedEntityInfo.EntityId);
+raycastTracker.StartTrackingByPosition(targetPosition);
+raycastTracker.StartTrackingByPosition(targetPosition, detectedEntityInfo.EntityId);
 ```
 *detectedEntityInfo.EntityId is an additional parameter to ensure it only locks on to a particular grid.*
 
 **StartTrackingByVector()** - Start tracking by attempting to lock on to a target in the specified forward direction with a max distance. Example below:
 ```
-raycastManager.StartTrackingByVector(aimingCameraBlock, 5000);
-raycastManager.StartTrackingByVector(aimingTurretBlock, 5000);
-raycastManager.StartTrackingByVector(remoteControl.GetPosition(), remoteControl.WorldMatrix.Forward, 5000);
+raycastTracker.StartTrackingByVector(aimingCameraBlock, 5000);
+raycastTracker.StartTrackingByVector(aimingTurretBlock, 5000);
+raycastTracker.StartTrackingByVector(remoteControl.GetPosition(), remoteControl.WorldMatrix.Forward, 5000);
 ```
 *aimingCameraBlock is a reference block for aiming. If this block is a turret, the turret's aimed point (azimuth and elevation) is used instead of its absolute grid forward.*
 
@@ -48,13 +48,13 @@ raycastManager.StartTrackingByVector(remoteControl.GetPosition(), remoteControl.
 
 Ghost Ahead will spend additional raycasts to trace ahead of your aim point. Used primary for lag compensation (including gyro lag and rubberband):
 ```
-raycastManager.StartTrackingByVector(aimingCameraBlock, 5000, RaycastManager.RaycastStrategy.GHOST_AHEAD, 4, 0.5);
+raycastTracker.StartTrackingByVector(aimingCameraBlock, 5000, RaycastTracker.RaycastStrategy.GHOST_AHEAD, 4, 0.5);
 ```
 *Example uses Ghost Ahead to trace 4 additional raycasts to compensate an estimated 0.5 seconds of user input movements*
 
 Ghost Circular will spend additional raycasts to trace a circle around your aim point. Used primary for lag compensation (including gyro lag and rubberband):
 ```
-raycastManager.StartTrackingByVector(aimingCameraBlock, 5000, RaycastManager.RaycastStrategy.GHOST_CIRCULAR, 6, 0.2);
+raycastTracker.StartTrackingByVector(aimingCameraBlock, 5000, RaycastTracker.RaycastStrategy.GHOST_CIRCULAR, 6, 0.2);
 ```
 *Example uses Ghost Circular to trace 6 additional raycasts around the aim point with 0.2 degree deviations*
 
@@ -65,7 +65,7 @@ raycastManager.StartTrackingByVector(aimingCameraBlock, 5000, RaycastManager.Ray
 To get the locked-on target information, use the following method **AFTER** the **Update()** method is called:
 
 ```
-raycastManager.GetRaycastTarget(out outTargetPosition, out outTargetVelocity, out outEntityId);
+raycastTracker.GetRaycastTarget(out outTargetPosition, out outTargetVelocity, out outEntityId);
 ```
 
 
