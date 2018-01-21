@@ -1,6 +1,7 @@
 # Helper Codes
 
 This folder contains code snippets and helper classes to be included into other ingame scripts.
+**You have full rights to use anything here and re-publish in any builds.**
 
 
 ## RaycastTracker.cs
