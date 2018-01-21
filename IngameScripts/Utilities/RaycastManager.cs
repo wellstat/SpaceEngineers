@@ -1,5 +1,11 @@
 ﻿public class RaycastManager
 {
+    //Minimum number of ticks the script must wait before using each raycast. This is for performance purposes
+    public const int MINIMUM_RAYCAST_TICKS = 15;
+
+    //Number of ticks to check raycast again if no cameras are usable
+    public const int RAYCAST_COOLDOWN_RECHECK_TICKS = 15;
+
     //Number of ticks before refreshing nextRaycastReadyRefresh
     public const int RAYCAST_READY_REFRESH_TICKS = 15;
 
@@ -578,15 +584,23 @@
                 maxDist = (targetPosition - m_cameras[0].GetPosition()).Length() + overshootDistance;
             }
 
-            float available = (count > 1 ? count * RaycastUsagePercent: RaycastUsagePercent);
+            if (count > 0)
+            {
+                float available = count * RaycastUsagePercent;
 
-            float factor = ticksRatio / available;
-            nextRaycastDelay = (int)Math.Ceiling(maxDist * factor);
+                float factor = ticksRatio / available;
+                nextRaycastDelay = (int)Math.Ceiling(maxDist * factor);
 
-            reservedRaycastCharges = (int)Math.Floor((charges - available) * RelockUsagePercent);
+                reservedRaycastCharges = (int)Math.Floor((charges - available) * RelockUsagePercent);
+            }
+            else
+            {
+                nextRaycastDelay = RAYCAST_COOLDOWN_RECHECK_TICKS;
+                reservedRaycastCharges = 0;
+            }
         }
 
-        NextRaycastReadyClock = clock + (nextRaycastDelay * scaleDelay);
+        NextRaycastReadyClock = clock + Math.Max(MINIMUM_RAYCAST_TICKS, nextRaycastDelay * scaleDelay);
     }
 
     Vector3D GetOffsetVector(ref MyDetectedEntityInfo entityInfo)
