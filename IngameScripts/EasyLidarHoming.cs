@@ -3683,7 +3683,7 @@ void InitThrusters()
             }
         }
 
-        if (verticalTakeoff && up > -1)
+        if (up > -1)
         {
             launchThrusters = thrustGroup[up];
         }
