@@ -3653,6 +3653,10 @@ void InitThrusters()
                     }
                 }
             }
+            else
+            {
+                lowestThrust = 0f;
+            }
         }
 
         if (highestThrust == 0)
@@ -3679,7 +3683,7 @@ void InitThrusters()
 
             if (boolDrift == null)
             {
-                boolDrift = (highestThrust > lowestThrust * 2);
+                boolDrift = (highestThrust > lowestThrust);
             }
         }
 
