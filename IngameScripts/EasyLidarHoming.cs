@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v16.1
+// ADN - Easy Lidar Homing Script v17.0
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -148,6 +148,7 @@ List<IMyCameraBlock> missileLidars;
 IMyShipController remoteControl;
 IMyTerminalBlock refFwdBlock;
 IMyTerminalBlock refDwdBlock;
+bool isFixedDirection;
 
 IMyLargeTurretBase homingTurret;
 
@@ -176,10 +177,15 @@ MyDetectedEntityInfo commsLidarTarget;
 
 GyroControl gyroControl;
 
-List<IMyThrust> thrusters;
-float[] thrustValues;
+PIDController yawController;
+PIDController pitchController;
+PIDController rollController;
 
+List<IMyThrust> fwdThrusters;
 List<IMyThrust> launchThrusters;
+
+IMyTerminalBlock detachBlock;
+int detachBlockType = -1;
 
 int adjustThrustState;
 
@@ -230,26 +236,6 @@ Vector3D targetDirection;
 double targetSpeed;
 double targetRadius;
 
-PIDController yawController;
-PIDController pitchController;
-PIDController rollController;
-
-int subCounter = 0;
-int subMode = 0;
-int mode = -2;
-int clock = 0;
-bool init = false;
-
-IMyTerminalBlock detachBlock;
-int detachBlockType = -1;
-
-List<KeyValuePair<double, string[]>> rpmTriggerList;
-List<KeyValuePair<double, string[]>> distTriggerList;
-List<KeyValuePair<int, string[]>> timeTriggerList;
-bool haveTriggerCommands;
-
-Random rnd = new Random();
-
 double ticksRatio = 0;
 double ticksFactor = 0;
 
@@ -260,6 +246,27 @@ int nextLidarRecountTicks = 0;
 
 int nextAccelRecountTicks = 0;
 
+List<KeyValuePair<double, string[]>> rpmTriggerList;
+List<KeyValuePair<double, string[]>> distTriggerList;
+List<KeyValuePair<int, string[]>> timeTriggerList;
+bool haveTriggerCommands;
+
+Random rnd = new Random();
+
+List<IMyThrust>[] thrustGroup;
+float[] thrustTotal;
+
+int subCounter = 0;
+int subMode = 0;
+int mode = -2;
+int clock = 0;
+bool init = false;
+
+Program()
+{
+    Runtime.UpdateFrequency = UpdateFrequency.Once;
+}
+
 void Main(string arguments, UpdateType updateSource)
 {
     //---------- Initialization And General Controls ----------
@@ -268,11 +275,12 @@ void Main(string arguments, UpdateType updateSource)
     {
         if (subMode == 0)  //Check for configuration command
         {
-            if (updateSource == UpdateType.Antenna)
+            if ((updateSource & UpdateType.Once) > 0 || updateSource == UpdateType.Antenna)
             {
                 return;
             }
 
+            subCounter = 0;
             subMode = 1;
 
             missileId = Me.GetId().ToString();
@@ -299,30 +307,42 @@ void Main(string arguments, UpdateType updateSource)
             {
                 Runtime.UpdateFrequency = UpdateFrequency.Update1;
             }
-            else
+
+            return;
+        }
+        else if (subMode == 1)  //Missile still on launching ship's grid
+        {
+            if (subCounter == 0)
             {
+                InitLaunchingShipRefBlocks();
+
+                if (shipRefFwd != null)
+                {
+                    refFwdPosition = shipRefFwd.WorldMatrix.Translation;
+                    refFwdVector = (fwdIsTurret ? CalculateTurretViewVector(shipRefFwd as IMyLargeTurretBase) : shipRefFwd.WorldMatrix.Forward);
+                }
+
+                subCounter = 1;
                 return;
             }
-        }
-
-        if (subMode == 1)  //Missile still on launching ship's grid
-        {
-            InitLaunchingShipRefBlocks();
-
-            if (shipRefFwd != null)
+            else if (subCounter == 1)
             {
-                refFwdPosition = shipRefFwd.WorldMatrix.Translation;
-                refFwdVector = (fwdIsTurret ? CalculateTurretViewVector(shipRefFwd as IMyLargeTurretBase) : shipRefFwd.WorldMatrix.Forward);
-            }
+                detachBlock = GetDetachGridBlock();
 
-            if (!DetachFromGrid())
+                subCounter = 2;
+                return;
+            }
+            else
             {
-                throw new Exception("--- Initialization Failed ---");
-            }
+                if (!DetachFromGrid())
+                {
+                    throw new Exception("--- Initialization Failed ---");
+                }
 
-            subCounter = 0;
-            subMode = (missileDetachPortType == 99 ? 3 : 2);
-            return;
+                subCounter = 0;
+                subMode = (missileDetachPortType == 99 ? 3 : 2);
+                return;
+            }
         }
         else if (subMode == 2)  //Missile waiting for successful detachment from launching ship
         {
@@ -347,6 +367,7 @@ void Main(string arguments, UpdateType updateSource)
 
             if (isDetached)
             {
+                subCounter = 0;
                 subMode = 3;
                 return;
             }
@@ -365,19 +386,81 @@ void Main(string arguments, UpdateType updateSource)
         }
         else if (subMode == 3)  //Missile successfully detached and currently initializing
         {
-            if (missileDetachPortType == 3 || missileDetachPortType == 4)
+            if (subCounter == 0)
             {
-                DetachLockedConnectors();
+                subCounter = 1;
+
+                if (missileDetachPortType == 3 || missileDetachPortType == 4)
+                {
+                    DetachLockedConnectors();
+                    return;
+                }
             }
 
-            if (notMissile != null)
+            if (subCounter == 1)
             {
-                notMissileRadius = ComputeBlockGridDiagonalVector(notMissile).Length() / 2.0;
-            }
+                if (notMissile != null)
+                {
+                    notMissileRadius = ComputeBlockGridDiagonalVector(notMissile).Length() / 2.0;
+                }
 
-            if (!InitMissileBlocks())
+                InitMissileBlocks();
+
+                subCounter = 2;
+                return;
+            }
+            else if (subCounter == 2)
             {
-                throw new Exception("--- Initialization Failed ---");
+                InitMissileLidars();
+
+                subCounter = 3;
+                return;
+            }
+            else if (subCounter == 3)
+            {
+                InitGyroControl();
+
+                subCounter = 4;
+                return;
+            }
+            else if (subCounter == 4)
+            {
+                InitThrusters();
+
+                if (IsNotEmpty(missileActivationCommands))
+                {
+                    subCounter = 5;
+                    return;
+                }
+            }
+        }
+
+        if (fwdThrusters != null)
+        {
+            foreach (IMyThrust thrust in fwdThrusters)
+            {
+                thrust.Enabled = true;
+            }
+        }
+
+        if (launchThrusters != null)
+        {
+            foreach (IMyThrust thrust in launchThrusters)
+            {
+                thrust.Enabled = true;
+            }
+        }
+
+        gyroControl.Enabled(true);
+
+        if (statusDisplay != null && statusDisplay.HasAction("OnOff_On"))
+        {
+            statusDisplay.ApplyAction("OnOff_On");
+
+            IMyRadioAntenna radioAntenna = statusDisplay as IMyRadioAntenna;
+            if (radioAntenna != null && !radioAntenna.IsBroadcasting)
+            {
+                radioAntenna.EnableBroadcasting = true;
             }
         }
 
@@ -404,7 +487,7 @@ void Main(string arguments, UpdateType updateSource)
                 subCounter = (int)(launchSeconds * SECOND);
             }
 
-            FireThrusters(verticalTakeoff ? launchThrusters : thrusters, true);
+            FireThrusters(verticalTakeoff ? launchThrusters : fwdThrusters, true);
 
             mode = -1;
         }
@@ -463,7 +546,7 @@ void Main(string arguments, UpdateType updateSource)
             if (verticalTakeoff)
             {
                 FireThrusters(launchThrusters, false);
-                FireThrusters(thrusters, true);
+                FireThrusters(fwdThrusters, true);
             }
 
             gyroControl.SetGyroOverride(true);
@@ -1281,9 +1364,9 @@ double CalculateThrustAcceleration()
         else
         {
             float totalThrust = 0;
-            for (int i = 0; i < thrusters.Count; i++)
+            foreach (IMyThrust thruster in fwdThrusters)
             {
-                totalThrust += thrusters[i].MaxEffectiveThrust;
+                totalThrust += thruster.MaxEffectiveThrust;
             }
 
             thrustAcceleration = totalThrust / remoteControl.CalculateShipMass().TotalMass;
@@ -1830,7 +1913,7 @@ void AdjustThrustBasedOnAim()
     {
         if (adjustThrustState != 0)
         {
-            FireThrusters(thrusters, true);
+            FireThrusters(fwdThrusters, true);
             adjustThrustState = 0;
         }
     }
@@ -1838,90 +1921,79 @@ void AdjustThrustBasedOnAim()
     {
         if (adjustThrustState != 2)
         {
-            FireThrusters(thrusters, false);
+            FireThrusters(fwdThrusters, false);
             adjustThrustState = 2;
         }
     }
     else
     {
-        AdjustThrusters(thrusters, (float)(dot * 1.414));
+        AdjustThrusters(fwdThrusters, (float)(dot * 1.414));
         adjustThrustState = 1;
     }
 }
 
 //------------------------------ Missile Separation Methods ------------------------------
 
-bool DetachFromGrid(bool testOnly = false)
+IMyTerminalBlock GetDetachGridBlock()
 {
-    List<IMyTerminalBlock> blocks;
-
     switch (missileDetachPortType)
     {
         case 0:
         case 3:
-            blocks = GetDetachBlocks<IMyShipMergeBlock>();
-            detachBlock = GetClosestBlockFromReference(blocks, Me, true);
-
-            if (!testOnly)
-            {
-                if (detachBlock == null)
-                {
-                    Echo("Error: Missing Merge Block" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
-                    return false;
-                }
-                detachBlockType = 0;
-
-                ((IMyShipMergeBlock)detachBlock).Enabled = false;
-            }
-            return true;
+            return GetClosestBlockFromReference(GetDetachBlocks<IMyShipMergeBlock>(), Me, true);
         case 1:
         case 4:
-            blocks = GetDetachBlocks<IMyMotorBase>();
+            List<IMyTerminalBlock> blocks = GetDetachBlocks<IMyMotorBase>();
             for (int i = 0; i < blocks.Count; i++)
             {
                 IMyCubeGrid grid = ((IMyMotorBase)blocks[i]).TopGrid;
-                if (grid != null && grid == Me.CubeGrid)
-                {
-                    detachBlock = blocks[i];
-                    break;
-                }
+                if (grid != null && grid == Me.CubeGrid) return blocks[i];
             }
+            return null;
+        case 2:
+            return GetClosestBlockFromReference(GetDetachBlocks<IMyShipConnector>(), Me, true);
+        default:
+            return null;
+    }
+}
 
-            if (!testOnly)
+bool DetachFromGrid()
+{
+    switch (missileDetachPortType)
+    {
+        case 0:
+        case 3:
+            if (detachBlock == null)
             {
-                if (detachBlock == null)
-                {
-                    Echo("Error: Missing Rotor" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
-                    return false;
-                }
-                detachBlockType = 1;
-
-                ((IMyMotorBase)detachBlock).Detach();
+                Echo("Error: Missing Merge Block" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
+                return false;
             }
+            detachBlockType = 0;
+            ((IMyShipMergeBlock)detachBlock).Enabled = false;
+            return true;
+        case 1:
+        case 4:
+            if (detachBlock == null)
+            {
+                Echo("Error: Missing Rotor" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
+                return false;
+            }
+            detachBlockType = 1;
+            ((IMyMotorBase)detachBlock).Detach();
             return true;
         case 2:
-            blocks = GetDetachBlocks<IMyShipConnector>();
-            detachBlock = GetClosestBlockFromReference(blocks, Me, true);
-
-            if (!testOnly)
+            if (detachBlock == null)
             {
-                if (detachBlock == null)
-                {
-                    Echo("Error: Missing Connector" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
-                    return false;
-                }
-                detachBlockType = 2;
-
-                ((IMyShipConnector)detachBlock).Disconnect();
+                Echo("Error: Missing Connector" + (IsNotEmpty(strDetachPortTag) ? " with tag " + strDetachPortTag : "") + " to detach.");
+                return false;
             }
+            detachBlockType = 2;
+            ((IMyShipConnector)detachBlock).Disconnect();
             return true;
         case 99:
             return true;
         default:
-            if (!testOnly)
-            {
-                Echo("Error: Unknown missileDetachPortType - " + missileDetachPortType + ".");
-            }
+            Echo("Error: Unknown missileDetachPortType - " + missileDetachPortType + ".");
             return false;
     }
 }
@@ -2741,7 +2813,7 @@ void ProcessSingleMissileCommand(string[] tokens)
         if (verticalTakeoff)
         {
             FireThrusters(launchThrusters, false);
-            FireThrusters(thrusters, true);
+            FireThrusters(fwdThrusters, true);
         }
 
         gyroControl.ResetGyro();
@@ -2763,7 +2835,7 @@ void ProcessSingleMissileCommand(string[] tokens)
         if (verticalTakeoff)
         {
             FireThrusters(launchThrusters, false);
-            FireThrusters(thrusters, true);
+            FireThrusters(fwdThrusters, true);
         }
 
         gyroControl.ResetGyro();
@@ -2998,7 +3070,11 @@ void CheckMissile()
     Echo("----- Missile Issues -----\n");
 
     shipRefLidars = new List<IMyCameraBlock>(1);
-    InitMissileBlocks(true);
+
+    InitMissileBlocks();
+    InitMissileLidars();
+    InitGyroControl();
+    InitThrusters();
 
     Echo("\n----- Missile Parameters -----");
 
@@ -3012,10 +3088,10 @@ void CheckMissile()
     Echo("\n<<Below lists the Detected Blocks.\nSet to Show On HUD for checking>>");
 
     Echo("\nOne of the Forward Thrusters:");
-    if (thrusters.Count > 0)
+    if (fwdThrusters.Count > 0)
     {
-        Echo(thrusters[0].CustomName);
-        thrusters[0].ShowOnHUD = true;
+        Echo(fwdThrusters[0].CustomName);
+        fwdThrusters[0].ShowOnHUD = true;
     }
     else
     {
@@ -3033,12 +3109,12 @@ void CheckMissile()
         Echo("<NONE>");
     }
 
-    if (thrusters.Count > 0)
+    if (fwdThrusters.Count > 0)
     {
         bool haveFwdLidars = false;
         for (int i = 0; i < missileLidars.Count; i++)
         {
-            if (missileLidars[i].WorldMatrix.Forward.Dot(thrusters[0].WorldMatrix.Backward) > 0.99)
+            if (missileLidars[i].WorldMatrix.Forward.Dot(fwdThrusters[0].WorldMatrix.Backward) > 0.99)
             {
                 haveFwdLidars = true;
                 break;
@@ -3057,7 +3133,7 @@ void CheckLaunchingShip()
 {
     Echo("----- Launching Ship Warnings -----\n");
 
-    InitLaunchingShipRefBlocks(true);
+    InitLaunchingShipRefBlocks();
 
     Echo("\n----- Launching Ship Parameters -----");
 
@@ -3107,7 +3183,7 @@ void CheckLaunchingShip()
         Echo("<NONE>");
     }
 
-    DetachFromGrid(true);
+    detachBlock = GetDetachGridBlock();
 
     Echo("\nBlock to Detach on Launch:");
     if (detachBlock != null)
@@ -3125,19 +3201,8 @@ void CheckLaunchingShip()
 
 //------------------------------ Initialization Methods ------------------------------
 
-bool InitLaunchingShipRefBlocks(bool testOnly = false)
+bool InitLaunchingShipRefBlocks()
 {
-    bool multiShipRefPanel = false;
-    bool multiShipRefFwd = false;
-
-    shipRefPanel = null;
-    shipRefLidars = new List<IMyCameraBlock>();
-
-    if (missileLaunchType == 5)
-    {
-        shipRefTurrets = new List<IMyLargeTurretBase>();
-    }
-
     List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
     IMyBlockGroup group = (IsNotEmpty(strShipRefBlockGroup) ? GridTerminalSystem.GetBlockGroupWithName(strShipRefBlockGroup) : null);
     if (group != null)
@@ -3147,6 +3212,17 @@ bool InitLaunchingShipRefBlocks(bool testOnly = false)
     else
     {
         GridTerminalSystem.GetBlocks(blocks);
+    }
+
+    bool multiShipRefPanel = false;
+    bool multiShipRefFwd = false;
+
+    shipRefPanel = null;
+    shipRefLidars = new List<IMyCameraBlock>();
+
+    if (missileLaunchType == 5)
+    {
+        shipRefTurrets = new List<IMyLargeTurretBase>();
     }
 
     foreach (IMyTerminalBlock block in blocks)
@@ -3208,7 +3284,7 @@ bool InitLaunchingShipRefBlocks(bool testOnly = false)
     {
         Echo("Warning: Missing Camera Lidars with tag " + strShipRefLidar);
     }
-    else if (!testOnly)
+    else
     {
         foreach (IMyCameraBlock camera in shipRefLidars)
         {
@@ -3263,21 +3339,33 @@ bool InitLaunchingShipRefBlocks(bool testOnly = false)
     return true;
 }
 
-bool InitMissileBlocks(bool testOnly = false)
+List<IMyTerminalBlock> GetMissileBlocks()
 {
-    List<IMyTerminalBlock> gyros = new List<IMyTerminalBlock>();
-    thrusters = new List<IMyThrust>();
+    List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
+    GridTerminalSystem.GetBlocks(blocks);
+    return blocks;
+}
+
+void InitMissileBlocks()
+{
+    List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
+    GridTerminalSystem.GetBlocks(blocks);
+
+    List<IMyGyro> gyros = new List<IMyGyro>();
+
     missileLidars = new List<IMyCameraBlock>();
+    fwdThrusters = null;
     remoteControl = null;
     refFwdBlock = null;
     homingTurret = null;
     statusDisplay = null;
 
-    bool isFixedDirection = IsNotEmpty(strDirectionRefBlockTag);
+    isFixedDirection = IsNotEmpty(strDirectionRefBlockTag);
     bool needStatusBlock = IsNotEmpty(strStatusDisplayPrefix);
 
-    List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
-    GridTerminalSystem.GetBlocks(blocks);
+    thrustGroup = new List<IMyThrust>[6];
+    thrustTotal = new float[6];
+    bool haveThruster = false;
 
     foreach (IMyTerminalBlock block in blocks)
     {
@@ -3287,14 +3375,24 @@ bool InitMissileBlocks(bool testOnly = false)
             {
                 if (strGyroscopesTag == null || strGyroscopesTag.Length == 0 || NameContains(block, strGyroscopesTag))
                 {
-                    gyros.Add(block);
+                    gyros.Add(block as IMyGyro);
                 }
             }
             else if (block is IMyThrust)
             {
                 if (strThrustersTag == null || strThrustersTag.Length == 0 || NameContains(block, strThrustersTag))
                 {
-                    thrusters.Add(block as IMyThrust);
+                    IMyThrust thruster = block as IMyThrust;
+
+                    int index = (int)thruster.Orientation.Forward;
+                    if (thrustGroup[index] == null)
+                    {
+                        thrustGroup[index] = new List<IMyThrust>();
+                    }
+                    thrustGroup[index].Add(thruster);
+                    thrustTotal[index] += Math.Max(thruster.MaxEffectiveThrust, 0.00001f);
+
+                    haveThruster = true;
                 }
             }
             else if (block is IMyCameraBlock)
@@ -3320,20 +3418,6 @@ bool InitMissileBlocks(bool testOnly = false)
             if (block.CustomName.StartsWith(strStatusDisplayPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 statusDisplay = block;
-
-                if (!testOnly)
-                {
-                    if (statusDisplay.HasAction("OnOff_On"))
-                    {
-                        statusDisplay.ApplyAction("OnOff_On");
-
-                        IMyRadioAntenna radioAntenna = statusDisplay as IMyRadioAntenna;
-                        if (radioAntenna != null && !radioAntenna.IsBroadcasting)
-                        {
-                            radioAntenna.EnableBroadcasting = true;
-                        }
-                    }
-                }
             }
         }
     }
@@ -3351,19 +3435,61 @@ bool InitMissileBlocks(bool testOnly = false)
     }
 
     if (gyros.Count == 0) Echo("Error: Missing Gyroscopes.");
-    if (thrusters.Count == 0) Echo("Warning: Missing Thrusters.");
+    if (!haveThruster) Echo("Warning: Missing Thrusters.");
     if (remoteControl == null) Echo("Error: Missing Remote Control.");
 
+    gyroControl = new GyroControl(gyros);
+
+    if (boolLeadTarget == null)
+    {
+        boolLeadTarget = true;
+    }
+
+    if (spinAmount > 0)
+    {
+        boolNaturalDampener = false;
+    }
+
+    isFixedDirection = (refFwdBlock != null);
+
+    if (refFwdBlock == null)
+    {
+        refFwdBlock = ComputeHighestThrustReference();
+        refFwdReverse = true;
+    }
+
+    if (refFwdBlock == null)
+    {
+        Echo("Warning: Missing Reference Blocks or Forward Thrusters. Using " + (remoteControl == null ? "Programmable Block" : "Remote Control") + " for Reference.");
+
+        refFwdBlock = (remoteControl == null ? Me : (IMyTerminalBlock)remoteControl);
+        refFwdReverse = false;
+    }
+
+    refWorldMatrix = refFwdBlock.WorldMatrix;
+    if (refFwdReverse)
+    {
+        refWorldMatrix.Forward = refWorldMatrix.Backward;
+        refWorldMatrix.Left = refWorldMatrix.Right;
+    }
+}
+
+void InitGyroControl()
+{
+    gyroControl?.Init(ref refWorldMatrix);
+
+    InitPIDControllers();
+}
+
+void InitMissileLidars()
+{
     proximitySensors = null;
     failunsafeGrpCnt = 0;
 
     for (int i = 0; i < missileLidars.Count; i++)
     {
-        if (!testOnly)
-        {
-            missileLidars[i].Enabled = true;
-            missileLidars[i].EnableRaycast = true;
-        }
+        missileLidars[i].Enabled = true;
+        missileLidars[i].EnableRaycast = true;
 
         int startIndex = missileLidars[i].CustomName.IndexOf(strProximitySensorTag, StringComparison.OrdinalIgnoreCase);
         if (startIndex > -1)
@@ -3447,57 +3573,6 @@ bool InitMissileBlocks(bool testOnly = false)
         ticksRatio = 0.03;
         ticksFactor = 0.03;
     }
-
-    if (boolLeadTarget == null)
-    {
-        boolLeadTarget = true;
-    }
-
-    if (spinAmount > 0)
-    {
-        boolNaturalDampener = false;
-    }
-
-    isFixedDirection = (refFwdBlock != null);
-
-    if (refFwdBlock == null || boolNaturalDampener == null || boolDrift == null || verticalTakeoff)
-    {
-        thrustValues = ComputeMaxThrustValues(thrusters);
-    }
-
-    if (refFwdBlock == null)
-    {
-        refFwdBlock = ComputeHighestThrustReference(thrusters, thrustValues);
-        refFwdReverse = true;
-    }
-
-    if (refFwdBlock == null)
-    {
-        Echo("Warning: Missing Reference Blocks or Forward Thrusters. Using " + (remoteControl == null ? "Programmable Block" : "Remote Control") + " for Reference.");
-
-        refFwdBlock = (remoteControl == null ? Me : (IMyTerminalBlock)remoteControl);
-        refFwdReverse = false;
-    }
-
-    refWorldMatrix = refFwdBlock.WorldMatrix;
-    if (refFwdReverse)
-    {
-        refWorldMatrix.Forward = refWorldMatrix.Backward;
-        refWorldMatrix.Left = refWorldMatrix.Right;
-    }
-
-    gyroControl = new GyroControl(gyros, ref refWorldMatrix);
-    if (!testOnly)
-    {
-        gyroControl.Enabled(true);
-    }
-
-    InitThrusters(isFixedDirection, testOnly);
-    thrustValues = null;
-
-    InitPIDControllers();
-
-    return true;
 }
 
 void InitPIDControllers()
@@ -3526,62 +3601,60 @@ void InitPIDControllers()
     rollController = new PIDController(AIM_P, AIM_I, AIM_D, INTEGRAL_WINDUP_UPPER_LIMIT, INTEGRAL_WINDUP_LOWER_LIMIT, SECOND);
 }
 
-void InitThrusters(bool isFixedDirection, bool testOnly = false)
+void InitThrusters()
 {
     //---------- Find Forward Thrusters ----------
 
-    List<IMyThrust> checkThrusters = thrusters;
-    thrusters = new List<IMyThrust>();
-
     if (!isFixedDirection || boolNaturalDampener == null || boolDrift == null || verticalTakeoff)
     {
-        IMyThrust leftThruster = null;
-        IMyThrust rightThruster = null;
-        IMyThrust upThruster = null;
-        IMyThrust downThruster = null;
+        float lowestThrust = float.MaxValue;
+        float highestThrust = 0;
+        int highestSide = -1;
+        int up = -1;
 
-        float leftThrustTotal = 0;
-        float rightThrustTotal = 0;
-        float upThrustTotal = 0;
-        float downThrustTotal = 0;
-
-        for (int i = 0; i < checkThrusters.Count; i++)
+        for (int i = 0; i < 6; i++)
         {
-            Base6Directions.Direction thrusterDirection = refWorldMatrix.GetClosestDirection(checkThrusters[i].WorldMatrix.Backward);
-            switch (thrusterDirection)
+            if (thrustGroup[i] != null)
             {
-            case Base6Directions.Direction.Forward:
-                thrusters.Add(checkThrusters[i]);
-                break;
-            case Base6Directions.Direction.Left:
-                leftThruster = checkThrusters[i];
-                leftThrustTotal += thrustValues[i];
-                break;
-            case Base6Directions.Direction.Right:
-                rightThruster = checkThrusters[i];
-                rightThrustTotal += thrustValues[i];
-                break;
-            case Base6Directions.Direction.Up:
-                upThruster = checkThrusters[i];
-                upThrustTotal += thrustValues[i];
-                if (isFixedDirection)
-                {
-                    refDwdBlock = upThruster;
-                }
-                break;
-            case Base6Directions.Direction.Down:
-                downThruster = checkThrusters[i];
-                downThrustTotal += thrustValues[i];
-                break;
-            }
+                bool checkTotal = false;
+                Base6Directions.Direction direction = refWorldMatrix.GetClosestDirection(thrustGroup[i][0].WorldMatrix.Backward);
 
-            if (!testOnly)
-            {
-                checkThrusters[i].Enabled = true;
+                switch (direction)
+                {
+                    case Base6Directions.Direction.Forward:
+                        fwdThrusters = thrustGroup[i];
+                        break;
+                    case Base6Directions.Direction.Left:
+                    case Base6Directions.Direction.Right:
+                    case Base6Directions.Direction.Down:
+                        checkTotal = true;
+                        break;
+                    case Base6Directions.Direction.Up:
+                        checkTotal = true;
+                        if (isFixedDirection)
+                        {
+                            refDwdBlock = thrustGroup[i][0];
+                            up = i;
+                        }
+                        break;
+                }
+
+                if (checkTotal)
+                {
+                    if (thrustTotal[i] > highestThrust)
+                    {
+                        highestThrust = thrustTotal[i];
+                        highestSide = i;
+                    }
+
+                    if (thrustTotal[i] < lowestThrust)
+                    {
+                        lowestThrust = thrustTotal[i];
+                    }
+                }
             }
         }
 
-        float highestThrust = Math.Max(Math.Max(Math.Max(leftThrustTotal, rightThrustTotal), upThrustTotal), downThrustTotal);
         if (highestThrust == 0)
         {
             if (boolNaturalDampener == true)
@@ -3599,62 +3672,39 @@ void InitThrusters(bool isFixedDirection, bool testOnly = false)
         {
             if (!isFixedDirection)
             {
-                if (leftThrustTotal == highestThrust)
-                {
-                    refDwdBlock = leftThruster;
-                }
-                else if (rightThrustTotal == highestThrust)
-                {
-                    refDwdBlock = rightThruster;
-                }
-                else if (upThrustTotal == highestThrust)
-                {
-                    refDwdBlock = upThruster;
-                }
-                else
-                {
-                    refDwdBlock = downThruster;
-                }
+                refDwdBlock = thrustGroup[highestSide][0];
+                up = highestSide;
             }
             boolNaturalDampener = (refDwdBlock != null);
 
             if (boolDrift == null)
             {
-                float lowestThrust = Math.Min(Math.Min(Math.Min(leftThrustTotal, rightThrustTotal), upThrustTotal), downThrustTotal);
                 boolDrift = (highestThrust > lowestThrust * 2);
             }
         }
 
-        if (verticalTakeoff && refDwdBlock != null)
+        if (verticalTakeoff && up > -1)
         {
-            launchThrusters = new List<IMyThrust>();
-
-            for (int i = 0; i < checkThrusters.Count; i++)
-            {
-                if (refDwdBlock.WorldMatrix.Forward.Dot(checkThrusters[i].WorldMatrix.Forward) >= 0.9)
-                {
-                    launchThrusters.Add(checkThrusters[i]);
-                }
-            }
+            launchThrusters = thrustGroup[up];
         }
     }
     else
     {
-        for (int i = 0; i < checkThrusters.Count; i++)
+        for (int i = 0; i < 6; i++)
         {
-            Base6Directions.Direction thrusterDirection = refWorldMatrix.GetClosestDirection(checkThrusters[i].WorldMatrix.Backward);
-            if (thrusterDirection == Base6Directions.Direction.Forward)
+            if (thrustGroup[i] != null)
             {
-                thrusters.Add(checkThrusters[i]);
-            }
-            else if (boolNaturalDampener == true && thrusterDirection == Base6Directions.Direction.Up)
-            {
-                refDwdBlock = checkThrusters[i];
-            }
+                Base6Directions.Direction direction = refWorldMatrix.GetClosestDirection(thrustGroup[i][0].WorldMatrix.Backward);
 
-            if (!testOnly)
-            {
-                checkThrusters[i].Enabled = true;
+                if (direction == Base6Directions.Direction.Forward)
+                {
+                    fwdThrusters = thrustGroup[i];
+                }
+                else if (boolNaturalDampener == true && direction == Base6Directions.Direction.Up)
+                {
+                    launchThrusters = thrustGroup[i];
+                    refDwdBlock = launchThrusters[0];
+                }
             }
         }
 
@@ -3663,6 +3713,11 @@ void InitThrusters(bool isFixedDirection, bool testOnly = false)
             Echo("Warning: Natural Gravity Dampener feature not possible as there are no Downward Thrusters found.");
             boolNaturalDampener = false;
         }
+    }
+
+    if (fwdThrusters == null)
+    {
+        fwdThrusters = new List<IMyThrust>();
     }
 }
 
@@ -3678,110 +3733,30 @@ float[] ComputeMaxThrustValues(List<IMyThrust> checkThrusters)
     return thrustValues;
 }
 
-IMyTerminalBlock ComputeHighestThrustReference(List<IMyThrust> checkThrusters, float[] thrustValues)
+IMyTerminalBlock ComputeHighestThrustReference()
 {
-    if (checkThrusters.Count == 0)
+    float highestThrust = thrustTotal[0];
+    IMyThrust refThrust = (highestThrust > 0 ? thrustGroup[0][0] : null);
+    for (int i = 1; i < 6; i++)
     {
-        return null;
-    }
-
-    IMyThrust fwdThruster = null;
-    IMyThrust bwdThruster = null;
-    IMyThrust leftThruster = null;
-    IMyThrust rightThruster = null;
-    IMyThrust upThruster = null;
-    IMyThrust downThruster = null;
-
-    float fwdThrustTotal = 0;
-    float bwdThrustTotal = 0;
-    float leftThrustTotal = 0;
-    float rightThrustTotal = 0;
-    float upThrustTotal = 0;
-    float downThrustTotal = 0;
-
-    for (int i = 0; i < checkThrusters.Count; i++)
-    {
-        Base6Directions.Direction thrusterDirection = Me.WorldMatrix.GetClosestDirection(checkThrusters[i].WorldMatrix.Backward);
-        switch (thrusterDirection)
+        if (thrustTotal[i] > highestThrust)
         {
-        case Base6Directions.Direction.Forward:
-            fwdThruster = checkThrusters[i];
-            fwdThrustTotal += thrustValues[i];
-            break;
-        case Base6Directions.Direction.Backward:
-            bwdThruster = checkThrusters[i];
-            bwdThrustTotal += thrustValues[i];
-            break;
-        case Base6Directions.Direction.Left:
-            leftThruster = checkThrusters[i];
-            leftThrustTotal += thrustValues[i];
-            break;
-        case Base6Directions.Direction.Right:
-            rightThruster = checkThrusters[i];
-            rightThrustTotal += thrustValues[i];
-            break;
-        case Base6Directions.Direction.Up:
-            upThruster = checkThrusters[i];
-            upThrustTotal += thrustValues[i];
-            break;
-        case Base6Directions.Direction.Down:
-            downThruster = checkThrusters[i];
-            downThrustTotal += thrustValues[i];
-            break;
+            highestThrust = thrustTotal[i];
+            refThrust = thrustGroup[i][0];
         }
-    }
-
-    List<IMyTerminalBlock> highestThrustReferences = new List<IMyTerminalBlock>(2);
-
-    float highestThrust = Math.Max(Math.Max(Math.Max(Math.Max(Math.Max(fwdThrustTotal, bwdThrustTotal), leftThrustTotal), rightThrustTotal), upThrustTotal), downThrustTotal);
-    if (fwdThrustTotal == highestThrust && fwdThruster != null)
-    {
-        highestThrustReferences.Add(fwdThruster);
-    }
-    if (bwdThrustTotal == highestThrust && bwdThruster != null)
-    {
-        highestThrustReferences.Add(bwdThruster);
-    }
-    if (leftThrustTotal == highestThrust && leftThruster != null)
-    {
-        highestThrustReferences.Add(leftThruster);
-    }
-    if (rightThrustTotal == highestThrust && rightThruster != null)
-    {
-        highestThrustReferences.Add(rightThruster);
-    }
-    if (upThrustTotal == highestThrust && upThruster != null)
-    {
-        highestThrustReferences.Add(upThruster);
-    }
-    if (downThrustTotal == highestThrust && downThruster != null)
-    {
-        highestThrustReferences.Add(downThruster);
-    }
-
-    if (highestThrustReferences.Count == 1)
-    {
-        return highestThrustReferences[0];
-    }
-    else
-    {
-        Vector3D diagonalVector = ComputeBlockGridDiagonalVector(Me);
-
-        IMyTerminalBlock closestToLengthRef = highestThrustReferences[0];
-        double closestToLengthValue = 0;
-
-        for (int i = 0; i < highestThrustReferences.Count; i++)
+        else if (thrustTotal[i] == highestThrust && highestThrust > 0)
         {
-            double dotLength = Math.Abs(diagonalVector.Dot(highestThrustReferences[i].WorldMatrix.Forward));
-            if (dotLength > closestToLengthValue)
+            IMyThrust chkThrust = thrustGroup[i][0];
+            Vector3D diagonal = ComputeBlockGridDiagonalVector(Me);
+            double dot1 = Math.Abs(diagonal.Dot(chkThrust.WorldMatrix.Forward));
+            double dot2 = Math.Abs(diagonal.Dot(refThrust.WorldMatrix.Forward));
+            if (dot1 > dot2)
             {
-                closestToLengthValue = dotLength;
-                closestToLengthRef = highestThrustReferences[i];
+                refThrust = chkThrust;
             }
         }
-
-        return closestToLengthRef;
     }
+    return refThrust;
 }
 
 Vector3D ComputeBlockGridDiagonalVector(IMyTerminalBlock block)
@@ -3801,24 +3776,24 @@ Vector3D ComputeBlockGridMidPoint(IMyTerminalBlock block)
 
 //------------------------------ Thruster Control Methods ------------------------------
 
-void FireThrusters(List<IMyThrust> listThrusters, bool overrideMode)
+void FireThrusters(List<IMyThrust> thrusters, bool overrideMode)
 {
-    if (listThrusters != null)
+    if (thrusters != null)
     {
-        for (int i = 0; i < listThrusters.Count; i++)
+        for (int i = 0; i < thrusters.Count; i++)
         {
-            listThrusters[i].SetValue("Override", (overrideMode ? listThrusters[i].GetMaximum<float>("Override") : 0f));
+            thrusters[i].SetValue("Override", (overrideMode ? thrusters[i].GetMaximum<float>("Override") : 0f));
         }
     }
 }
 
-void AdjustThrusters(List<IMyThrust> listThrusters, float scale)
+void AdjustThrusters(List<IMyThrust> thrusters, float scale)
 {
-    if (listThrusters != null)
+    if (thrusters != null)
     {
-        for (int i = 0; i < listThrusters.Count; i++)
+        for (int i = 0; i < thrusters.Count; i++)
         {
-            listThrusters[i].SetValue("Override", listThrusters[i].GetMaximum<float>("Override") * scale);
+            thrusters[i].SetValue("Override", thrusters[i].GetMaximum<float>("Override") * scale);
         }
     }
 }
@@ -3886,34 +3861,32 @@ public class GyroControl
 
     List<IMyGyro> gyros;
 
-    private byte[] gyroYaw;
-    private byte[] gyroPitch;
-    private byte[] gyroRoll;
+    byte[] gyroYaw;
+    byte[] gyroPitch;
+    byte[] gyroRoll;
 
-    public GyroControl(List<IMyTerminalBlock> newGyros, ref MatrixD refWorldMatrix)
+    public GyroControl(List<IMyGyro> newGyros)
     {
-        gyros = new List<IMyGyro>(newGyros.Count);
+        gyros = newGyros;
+    }
 
-        gyroYaw = new byte[newGyros.Count];
-        gyroPitch = new byte[newGyros.Count];
-        gyroRoll = new byte[newGyros.Count];
-
-        int index = 0;
-        foreach (IMyTerminalBlock block in newGyros)
+    public void Init(ref MatrixD refWorldMatrix)
+    {
+        if (gyros == null)
         {
-            IMyGyro gyro = block as IMyGyro;
-            if (gyro != null)
-            {
-                gyroYaw[index] = SetRelativeDirection(gyro.WorldMatrix.GetClosestDirection(refWorldMatrix.Up));
-                gyroPitch[index] = SetRelativeDirection(gyro.WorldMatrix.GetClosestDirection(refWorldMatrix.Left));
-                gyroRoll[index] = SetRelativeDirection(gyro.WorldMatrix.GetClosestDirection(refWorldMatrix.Forward));
-
-                gyros.Add(gyro);
-
-                index++;
-            }
+            gyros = new List<IMyGyro>();
         }
 
+        gyroYaw = new byte[gyros.Count];
+        gyroPitch = new byte[gyros.Count];
+        gyroRoll = new byte[gyros.Count];
+
+        for (int i = 0; i < gyros.Count; i++)
+        {
+            gyroYaw[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Up));
+            gyroPitch[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Left));
+            gyroRoll[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Forward));
+        }
     }
 
     public byte SetRelativeDirection(Base6Directions.Direction dir)
