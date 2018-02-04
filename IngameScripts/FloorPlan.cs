@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Floor Plan Script v8.1
+// ADN - Floor Plan Script v8.3
 //------------------------------------------------------------
 
 string strDisplayPanelTag = "L_PANEL";
@@ -27,9 +27,9 @@ string strAlertBlockTypes = "AirVent,SensorBlock,Door,AirtightHangarDoor,Airtigh
 int HORIZONTAL_COUNT = 1;
 int VERTICAL_COUNT = 1;
 
-int REFRESH_INTERVAL = 15;
+int REFRESH_INTERVAL = 60;
 
-float INSTRUCTION_PERCENT_LIMIT = 0.9f;
+float INSTRUCTION_PERCENT_LIMIT = 0.2f;
 
 const int DEF_PIXEL_SIZE = 1;
 
@@ -152,6 +152,9 @@ int priorityCount = 0;
 bool needSensorDetected = false;
 List<Vector3D> sensorDetected = new List<Vector3D>();
 
+List<IMyTerminalBlock> alarmBlocks = new List<IMyTerminalBlock>();
+Dictionary<string, int[]> groupStats = new Dictionary<string, int[]>();
+
 Vector3I gridMin = new Vector3I();
 Vector3I gridMax = new Vector3I();
 
@@ -246,12 +249,6 @@ void Main(string args, UpdateType updateSource)
             InitMiscPanels(menuPnls, strMenuPanelTag);
 
             errorMessage = "";
-
-            if (Runtime.TimeSinceLastRun.Ticks > 2500000)
-            {
-                errorMessage += "[SLOW REFRESH DETECTED]\nEnsure Timer Uses TriggerNow Loop\n";
-                clock = 0;
-            }
 
             if (lyts.Count == 0)
             {
@@ -424,6 +421,12 @@ void Main(string args, UpdateType updateSource)
 
             subMode = 9;
             return;
+        }
+
+        if (bUseAlarmSystem)
+        {
+            alarmBlocks.Clear();
+            GridTerminalSystem.SearchBlocksOfName(strAlarmTag, alarmBlocks);
         }
 
         currentRenderTicks = clock;
@@ -704,9 +707,6 @@ void DisplayStatus()
 
 void ProcessAlarms()
 {
-    List<IMyTerminalBlock> alarmBlocks = new List<IMyTerminalBlock>();
-    GridTerminalSystem.SearchBlocksOfName(strAlarmTag, alarmBlocks);
-
     for (int i = 0; i < alarmBlocks.Count; i++)
     {
         IMyTerminalBlock blk = alarmBlocks[i];
@@ -810,8 +810,6 @@ void ProcessAlarms()
 void DisplayReport()
 {
     needSensorDetected = false;
-
-    Dictionary<string, int[]> groupStats = new Dictionary<string, int[]>();
 
     for (int i = 0; i < rptPnls.Count; i++)
     {
@@ -1325,6 +1323,14 @@ bool ProcessRunCommands(string cmd)
         InitMiscPanels(rptPnls, strReportPanelTag);
         InitMiscPanels(statPnls, strStatusPanelTag);
         InitMiscPanels(menuPnls, strMenuPanelTag);
+
+        if (bUseAlarmSystem)
+        {
+            alarmBlocks.Clear();
+            GridTerminalSystem.SearchBlocksOfName(strAlarmTag, alarmBlocks);
+        }
+
+        groupStats.Clear();
 
         subCounter = 0;
         subMode = 3;
@@ -3004,7 +3010,9 @@ public class LayoutPanel
         Panel.ShowTextureOnScreen();
         Panel.ShowPublicTextOnScreen();
 
-        if (Panel.Min != Panel.Max)
+        Vector3I left, down;
+        GetTileVectors(out left, out down);
+        if (left.Length() != down.Length())
         {
             scWhX = WIDE_LCD_MAX_RESOLUTION_X / pixelSize;
             scWhY = WIDE_LCD_MAX_RESOLUTION_Y / pixelSize;
@@ -3028,12 +3036,8 @@ public class LayoutPanel
             return;
         }
 
-        Vector3I pnLeft = -Base6Directions.GetIntVector(Panel.Orientation.Left);
-        Vector3I pnDown = -Base6Directions.GetIntVector(Panel.Orientation.Up);
-
-        Vector3I pnSize = Panel.Max - Panel.Min + new Vector3I(1, 1, 1);
-        pnLeft = new Vector3I(pnLeft.X * pnSize.X, pnLeft.Y * pnSize.Y, pnLeft.Z * pnSize.Z);
-        pnDown = new Vector3I(pnDown.X * pnSize.X, pnDown.Y * pnSize.Y, pnDown.Z * pnSize.Z);
+        Vector3I pnLeft, pnDown;
+        GetTileVectors(out pnLeft, out pnDown);
 
         bool truncatePanels = false;
         int maxArea = 0;
@@ -3103,7 +3107,7 @@ public class LayoutPanel
             Panels = remainingPanels;
         }
 
-        if (Panel.Min != Panel.Max)
+        if (pnLeft.Length() != pnDown.Length())
         {
             scWhX = WIDE_LCD_MAX_RESOLUTION_X / pixelSize * PanelHorizontalCount;
             scWhY = WIDE_LCD_MAX_RESOLUTION_Y / pixelSize * PanelVerticalCount;
@@ -3115,6 +3119,16 @@ public class LayoutPanel
         }
 
         multiplePanels = true;
+    }
+
+    public void GetTileVectors(out Vector3I pnLeft, out Vector3I pnDown)
+    {
+        pnLeft = -Base6Directions.GetIntVector(Panel.Orientation.Left);
+        pnDown = -Base6Directions.GetIntVector(Panel.Orientation.Up);
+
+        Vector3I pnSize = Panel.Max - Panel.Min + new Vector3I(1, 1, 1);
+        pnLeft = new Vector3I(pnLeft.X * pnSize.X, pnLeft.Y * pnSize.Y, pnLeft.Z * pnSize.Z);
+        pnDown = new Vector3I(pnDown.X * pnSize.X, pnDown.Y * pnSize.Y, pnDown.Z * pnSize.Z);
     }
 
     public void UpdatePixelSize()
