@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v17.0
+// ADN - Easy Lidar Homing Script v17.2
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -1645,6 +1645,8 @@ void TransitToFullLock()
     {
         ExecuteTriggerCommand(missileTriggerCommands);
     }
+
+    nextLidarRecountTicks = clock;
 
     subCounter = 0;
     subMode = 1;
@@ -3581,7 +3583,7 @@ void InitPIDControllers()
 
     if (AIM_P + AIM_I + AIM_D < 0.001)
     {
-        if (Me.CubeGrid.ToString().Contains("Large"))
+        if (Me.CubeGrid.GridSizeEnum == MyCubeSize.Large)
         {
             AIM_P = DEF_BIG_GRID_P;
             AIM_I = DEF_BIG_GRID_I;
@@ -3725,18 +3727,6 @@ void InitThrusters()
     }
 }
 
-float[] ComputeMaxThrustValues(List<IMyThrust> checkThrusters)
-{
-    float[] thrustValues = new float[checkThrusters.Count];
-
-    for (int i = 0; i < checkThrusters.Count; i++)
-    {
-        thrustValues[i] = Math.Max(checkThrusters[i].MaxEffectiveThrust, 0.00001f);
-    }
-
-    return thrustValues;
-}
-
 IMyTerminalBlock ComputeHighestThrustReference()
 {
     float highestThrust = thrustTotal[0];
@@ -3786,7 +3776,7 @@ void FireThrusters(List<IMyThrust> thrusters, bool overrideMode)
     {
         for (int i = 0; i < thrusters.Count; i++)
         {
-            thrusters[i].SetValue("Override", (overrideMode ? thrusters[i].GetMaximum<float>("Override") : 0f));
+            thrusters[i].ThrustOverridePercentage = (overrideMode ? 1f : 0f);
         }
     }
 }
@@ -3797,7 +3787,7 @@ void AdjustThrusters(List<IMyThrust> thrusters, float scale)
     {
         for (int i = 0; i < thrusters.Count; i++)
         {
-            thrusters[i].SetValue("Override", thrusters[i].GetMaximum<float>("Override") * scale);
+            thrusters[i].ThrustOverridePercentage = scale;
         }
     }
 }
