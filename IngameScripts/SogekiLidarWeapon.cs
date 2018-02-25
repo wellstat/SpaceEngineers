@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Sogeki Lidar Weapon Script v3.1
+// ADN - Sogeki Lidar Weapon Script v3.3
 //------------------------------------------------------------
 
 const string LIDAR_BLOCK_TAG = "Lidar";                 //Tag of Cameras to be used as Lidars
@@ -70,13 +70,13 @@ bool checkSelfOcclusion = false;                        //Perform additional che
 
 //------------------------------ Above Is User Configuration Section. This Section Is For PID Tuning ------------------------------
 
-const double DEF_SMALL_GRID_P = 400;                    //The default proportional gain of small grid gyroscopes
+const double DEF_SMALL_GRID_P = 40;                     //The default proportional gain of small grid gyroscopes
 const double DEF_SMALL_GRID_I = 0;                      //The default integral gain of small grid gyroscopes
-const double DEF_SMALL_GRID_D = 125;                    //The default derivative gain of small grid gyroscopes
+const double DEF_SMALL_GRID_D = 13;                     //The default derivative gain of small grid gyroscopes
 
-const double DEF_BIG_GRID_P = 50;                       //The default proportional gain of large grid gyroscopes
-const double DEF_BIG_GRID_I = 0.5;                      //The default integral gain of large grid gyroscopes
-const double DEF_BIG_GRID_D = 4;                        //The default derivative gain of large grid gyroscopes
+const double DEF_BIG_GRID_P = 15;                       //The default proportional gain of large grid gyroscopes
+const double DEF_BIG_GRID_I = 0;                        //The default integral gain of large grid gyroscopes
+const double DEF_BIG_GRID_D = 7;                        //The default derivative gain of large grid gyroscopes
 
 bool useDefaultPIDValues = true;                        //Whether to use predefined PID values based on detected grid size
 
@@ -97,13 +97,11 @@ IMyTerminalBlock aimPointBlock;
 List<IMyShipController> cockpits;
 IMyShipController controlledCockpit;
 
-List<IMyTerminalBlock> gyroscopes;
-string[] gyroYawField;
-string[] gyroPitchField;
-string[] gyroRollField;
-float[] gyroYawFactor;
-float[] gyroPitchFactor;
-float[] gyroRollFactor;
+GyroControl gyroControl;
+
+PIDController yawController;
+PIDController pitchController;
+PIDController rollController;
 
 IMyTextPanel targetPanel;
 
@@ -148,14 +146,6 @@ bool lastTargetFound;
 
 double angleToTarget;
 
-double targetYawAngle;
-double targetPitchAngle;
-
-double lastYawError;
-double lastYawIntegral;
-double lastPitchError;
-double lastPitchIntegral;
-
 int subCounter = 0;
 int subMode = 0;
 int mode = 0;
@@ -186,10 +176,6 @@ const double RADIAN_FACTOR = Math.PI / 180;
 
 const int MIN_RECOUNT_TICKS = 15;
 const float SECOND = 60f;
-
-Vector3D Y_VECTOR = new Vector3D(0, -1, 0);
-Vector3D Z_VECTOR = new Vector3D(0, 0, -1);
-Vector3D POINT_ZERO = new Vector3D(0, 0, 0);
 
 Program()
 {
@@ -251,7 +237,7 @@ void Main(string arguments, UpdateType updateSource)
         ProcessCommand(arguments);
     }
 
-    if ((updateSource & UpdateType.Update1) == 0)
+    if ((updateSource & UpdateType.Update1) == 0 || Runtime.TimeSinceLastRun.Ticks == 0)
     {
         return;
     }
@@ -302,7 +288,7 @@ void Main(string arguments, UpdateType updateSource)
                                 }
                                 else
                                 {
-                                    relativeHitPosition = POINT_ZERO;
+                                    relativeHitPosition = Vector3D.Zero;
                                 }
 
                                 lidarTargetInfo = entityInfo;
@@ -387,7 +373,7 @@ void Main(string arguments, UpdateType updateSource)
         {
             if (SHOOT_AHEAD_TIME > 0 || SHOOT_AHEAD_DISTANCE > 0)
             {
-                targetPosition += (new Vector3D(lidarTargetInfo.Velocity) * SHOOT_AHEAD_TIME) + (SHOOT_AHEAD_DISTANCE == 0 ? POINT_ZERO : Vector3D.Normalize(lidarTargetInfo.Velocity) * SHOOT_AHEAD_DISTANCE);
+                targetPosition += (new Vector3D(lidarTargetInfo.Velocity) * SHOOT_AHEAD_TIME) + (SHOOT_AHEAD_DISTANCE == 0 ? Vector3D.Zero : Vector3D.Normalize(lidarTargetInfo.Velocity) * SHOOT_AHEAD_DISTANCE);
             }
 
             switch (weaponType)
@@ -445,7 +431,7 @@ void Main(string arguments, UpdateType updateSource)
             }
         }
 
-        refLookAtMatrix = MatrixD.CreateLookAt(POINT_ZERO, refWorldMatrix.Forward, refWorldMatrix.Up);
+        refLookAtMatrix = MatrixD.CreateLookAt(Vector3D.Zero, refWorldMatrix.Forward, refWorldMatrix.Up);
         aimDirection = Vector3D.Normalize(Vector3D.TransformNormal(aimDirection, refLookAtMatrix));
 
         AimAtTarget(aimDirection);
@@ -461,7 +447,7 @@ void Main(string arguments, UpdateType updateSource)
                 }
             }
         }
-        SetGyroRoll(controlledCockpit.RollIndicator * -30);
+        gyroControl.SetGyroRoll(controlledCockpit.RollIndicator * -30);
 
         if (lastLidarTargetClock + LIDAR_LOCK_LOST_TICKS <= clock)
         {
@@ -609,7 +595,7 @@ void ProcessModeChange()
 
         if (mode == 0)
         {
-            SetGyroOverride(false);
+            gyroControl.SetGyroOverride(false);
 
             if (targetPanel != null)
             {
@@ -618,19 +604,18 @@ void ProcessModeChange()
         }
         else if (mode == 1)
         {
-            SetGyroOverride(false);
+            gyroControl.SetGyroOverride(false);
         }
         else if (mode == 2)
         {
             if (isAim)
             {
-                lastYawError = lastYawIntegral = lastPitchError = lastPitchIntegral = 0;
-                ResetGyro();
-                SetGyroOverride(true);
+                gyroControl.ResetGyro();
+                gyroControl.SetGyroOverride(true);
             }
             else
             {
-                SetGyroOverride(false);
+                gyroControl.SetGyroOverride(false);
             }
 
             alertTriggered = false;
@@ -692,13 +677,12 @@ void ProcessCommand(string command)
         {
             if (isAim)
             {
-                lastYawError = lastYawIntegral = lastPitchError = lastPitchIntegral = 0;
-                ResetGyro();
-                SetGyroOverride(true);
+                gyroControl.ResetGyro();
+                gyroControl.SetGyroOverride(true);
             }
             else
             {
-                SetGyroOverride(false);
+                gyroControl.SetGyroOverride(false);
             }
         }
     }
@@ -845,7 +829,7 @@ List<IMyCameraBlock> GetAvailableLidars(List<IMyCameraBlock> lidars, ref Vector3
 
 bool IsNotOccluded(IMyTerminalBlock block, ref Vector3D worldAimVector)
 {
-    Matrix lidarLookAtMatrix = Matrix.CreateLookAt(POINT_ZERO, block.CubeGrid.WorldMatrix.Forward, block.CubeGrid.WorldMatrix.Up);
+    Matrix lidarLookAtMatrix = Matrix.CreateLookAt(Vector3D.Zero, block.CubeGrid.WorldMatrix.Forward, block.CubeGrid.WorldMatrix.Up);
     Ray ray = new Ray(block.Position, Vector3.Transform(worldAimVector, lidarLookAtMatrix));
     return !occlusionChecker.TestRayHit(ray);
 }
@@ -1030,37 +1014,25 @@ void AimAtTarget(Vector3D targetVector)
     yawVector.Normalize();
     pitchVector.Normalize();
 
-    targetYawAngle = Math.Acos(yawVector.Dot(Z_VECTOR)) * GetMultiplierSign(targetVector.GetDim(0));
-    targetPitchAngle = Math.Acos(pitchVector.Dot(Z_VECTOR)) * GetMultiplierSign(targetVector.GetDim(1));
-
-    double targetYawAngleLN = Math.Round(targetYawAngle, 2);
-    double targetPitchAngleLN = Math.Round(targetPitchAngle, 2);
+    double yawInput = Math.Acos(yawVector.Dot(Vector3D.Forward)) * GetMultiplierSign(targetVector.GetDim(0));
+    double pitchInput = Math.Acos(pitchVector.Dot(Vector3D.Forward)) * GetMultiplierSign(targetVector.GetDim(1));
 
     //---------- PID Controller Adjustment ----------
 
-    lastYawIntegral = lastYawIntegral + (targetYawAngle / SECOND);
-    lastYawIntegral = (INTEGRAL_WINDUP_LIMIT > 0 ? Math.Max(Math.Min(lastYawIntegral, INTEGRAL_WINDUP_LIMIT), -INTEGRAL_WINDUP_LIMIT) : lastYawIntegral);
-    double yawDerivative = (targetYawAngleLN - lastYawError) * SECOND;
-    lastYawError = targetYawAngleLN;
-    targetYawAngle = (AIM_P * targetYawAngle) + (AIM_I * lastYawIntegral) + (AIM_D * yawDerivative);
+    yawInput = yawController.Filter(yawInput, 2);
+    pitchInput = pitchController.Filter(pitchInput, 2);
 
-    lastPitchIntegral = lastPitchIntegral + (targetPitchAngle / SECOND);
-    lastPitchIntegral = (INTEGRAL_WINDUP_LIMIT > 0 ? Math.Max(Math.Min(lastPitchIntegral, INTEGRAL_WINDUP_LIMIT), -INTEGRAL_WINDUP_LIMIT) : lastPitchIntegral);
-    double pitchDerivative = (targetPitchAngleLN - lastPitchError) * SECOND;
-    lastPitchError = targetPitchAngleLN;
-    targetPitchAngle = (AIM_P * targetPitchAngle) + (AIM_I * lastPitchIntegral) + (AIM_D * pitchDerivative);
-
-    if (Math.Abs(targetYawAngle) + Math.Abs(targetPitchAngle) > AIM_LIMIT)
+    if (Math.Abs(yawInput) + Math.Abs(pitchInput) > AIM_LIMIT)
     {
-        double adjust = AIM_LIMIT / (Math.Abs(targetYawAngle) + Math.Abs(targetPitchAngle));
-        targetYawAngle *= adjust;
-        targetPitchAngle *= adjust;
+        double adjust = AIM_LIMIT / (Math.Abs(yawInput) + Math.Abs(pitchInput));
+        yawInput *= adjust;
+        pitchInput *= adjust;
     }
 
     //---------- Set Gyroscope Parameters ----------
 
-    SetGyroYaw(targetYawAngle);
-    SetGyroPitch(targetPitchAngle);
+    gyroControl.SetGyroYaw((float)yawInput);
+    gyroControl.SetGyroPitch((float)pitchInput);
 }
 
 //------------------------------ Initialization Methods ------------------------------
@@ -1073,8 +1045,8 @@ void InitScript(string arguments)
     aimPointBlock = GetAimPointBlock();
     if (aimPointBlock == null) throw new Exception("--- Initialization Failed ---");
 
-    gyroscopes = GetGyroscopes();
-    if (gyroscopes == null) throw new Exception("--- Initialization Failed ---");
+    List<IMyTerminalBlock> gyros = GetGyroscopes();
+    if (gyros == null) throw new Exception("--- Initialization Failed ---");
 
     for (int i = 0; i < aimLidars.Count; i++)
     {
@@ -1106,9 +1078,11 @@ void InitScript(string arguments)
     targetPanel = GetSingleBlockWithName(TARGET_GPS_PANEL) as IMyTextPanel;
 
     refWorldMatrix = aimPointBlock.WorldMatrix;
-    refLookAtMatrix = MatrixD.CreateLookAt(POINT_ZERO, refWorldMatrix.Forward, refWorldMatrix.Up);
+    refLookAtMatrix = MatrixD.CreateLookAt(Vector3D.Zero, refWorldMatrix.Forward, refWorldMatrix.Up);
 
-    InitGyroscopes();
+    gyroControl = new GyroControl(gyros, ref refWorldMatrix);
+
+    InitPIDControllers();
 
     List<IMyTerminalBlock> blocks = GetBlocksWithName<IMyTextPanel>(STATUS_DISPLAY_PANEL_TAG);
     if (blocks.Count > 0)
@@ -1195,33 +1169,11 @@ List<IMyTerminalBlock> GetGyroscopes()
     }
 }
 
-void InitGyroscopes()
+void InitPIDControllers()
 {
-    //---------- Find Gyroscope Orientation With Respect To Ship ----------
+    //---------- Setup PID Controller ----------
 
-    gyroYawField = new string[gyroscopes.Count];
-    gyroPitchField = new string[gyroscopes.Count];
-    gyroYawFactor = new float[gyroscopes.Count];
-    gyroPitchFactor = new float[gyroscopes.Count];
-    gyroRollField = new string[gyroscopes.Count];
-    gyroRollFactor = new float[gyroscopes.Count];
-
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        Base6Directions.Direction gyroUp = gyroscopes[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Up);
-        Base6Directions.Direction gyroLeft = gyroscopes[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Left);
-        Base6Directions.Direction gyroForward = gyroscopes[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Forward);
-
-        SetRelativeDirection(ref gyroUp, i, ref gyroYawField, ref gyroYawFactor);
-        SetRelativeDirection(ref gyroLeft, i, ref gyroPitchField, ref gyroPitchFactor);
-        SetRelativeDirection(ref gyroForward, i, ref gyroRollField, ref gyroRollFactor);
-
-        gyroscopes[i].ApplyAction("OnOff_On");
-    }
-
-    //---------- Check Whether To Use Default PID Values ----------
-
-    if (useDefaultPIDValues)
+    if (AIM_P + AIM_I + AIM_D < 0.001)
     {
         if (Me.CubeGrid.ToString().Contains("Large"))
         {
@@ -1237,37 +1189,10 @@ void InitGyroscopes()
             AIM_LIMIT *= 2;
         }
     }
-}
 
-void SetRelativeDirection(ref Base6Directions.Direction dir, int i, ref string[] field, ref float[] factor)
-{
-    switch (dir)
-    {
-        case Base6Directions.Direction.Up:
-            field[i] = "Yaw";
-            factor[i] = GYRO_FACTOR;
-            break;
-        case Base6Directions.Direction.Down:
-            field[i] = "Yaw";
-            factor[i] = -GYRO_FACTOR;
-            break;
-        case Base6Directions.Direction.Left:
-            field[i] = "Pitch";
-            factor[i] = GYRO_FACTOR;
-            break;
-        case Base6Directions.Direction.Right:
-            field[i] = "Pitch";
-            factor[i] = -GYRO_FACTOR;
-            break;
-        case Base6Directions.Direction.Forward:
-            field[i] = "Roll";
-            factor[i] = -GYRO_FACTOR;
-            break;
-        case Base6Directions.Direction.Backward:
-            field[i] = "Roll";
-            factor[i] = GYRO_FACTOR;
-            break;
-    }
+    yawController = new PIDController(AIM_P, AIM_I, AIM_D, INTEGRAL_WINDUP_LIMIT, -INTEGRAL_WINDUP_LIMIT, SECOND);
+    pitchController = new PIDController(AIM_P, AIM_I, AIM_D, INTEGRAL_WINDUP_LIMIT, -INTEGRAL_WINDUP_LIMIT, SECOND);
+    rollController = new PIDController(AIM_P, AIM_I, AIM_D, INTEGRAL_WINDUP_LIMIT, -INTEGRAL_WINDUP_LIMIT, SECOND);
 }
 
 //------------------------------ Command Processing Methods ------------------------------
@@ -1296,51 +1221,6 @@ void ProcessCustomConfiguration()
 }
 
 //------------------------------ Gyro Control API ------------------------------
-
-void SetGyroOverride(bool bOverride)
-{
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        if (((IMyGyro)gyroscopes[i]).GyroOverride != bOverride)
-        {
-            gyroscopes[i].ApplyAction("Override");
-        }
-    }
-}
-
-void SetGyroYaw(double yawRate)
-{
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        gyroscopes[i].SetValueFloat(gyroYawField[i], (float)yawRate * gyroYawFactor[i]);
-    }
-}
-
-void SetGyroPitch(double pitchRate)
-{
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        gyroscopes[i].SetValueFloat(gyroPitchField[i], (float)pitchRate * gyroPitchFactor[i]);
-    }
-}
-
-void SetGyroRoll(double rollRate)
-{
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        gyroscopes[i].SetValueFloat(gyroRollField[i], (float)rollRate * gyroRollFactor[i]);
-    }
-}
-
-void ResetGyro()
-{
-    for (int i = 0; i < gyroscopes.Count; i++)
-    {
-        gyroscopes[i].SetValueFloat("Yaw", 0);
-        gyroscopes[i].SetValueFloat("Pitch", 0);
-        gyroscopes[i].SetValueFloat("Roll", 0);
-    }
-}
 
 IMyTerminalBlock GetSingleBlockWithName(string name)
 {
@@ -1456,7 +1336,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroYaw[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -1465,7 +1345,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroPitch[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -1474,7 +1354,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroRoll[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 

@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v2.0
+// ADN - Trajectory Missile Script v2.3
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
@@ -73,7 +73,6 @@ const double DEF_BIG_GRID_P = 15.71;
 const double DEF_BIG_GRID_I = 0;
 const double DEF_BIG_GRID_D = 7.05;
 
-const double RPM_FACTOR = 1800 / Math.PI;
 const float SECOND = 60f;
 
 //------------------------------ Below Is Main Script Body ------------------------------
@@ -106,7 +105,6 @@ double speed;
 double rpm;
 
 double lastSpeed;
-Vector3D lastNormal;
 Vector3D lastPosition;
 
 Vector3D targetPosition;
@@ -272,7 +270,7 @@ void Main(string arguments, UpdateType updateSource)
         ExecuteTargetCommand(shipRefTargetPanel.CustomData);
     }
 
-    if ((updateSource & UpdateType.Update1) == 0)
+    if ((updateSource & UpdateType.Update1) == 0 || Runtime.TimeSinceLastRun.Ticks == 0)
     {
         return;
     }
@@ -650,8 +648,7 @@ void CalculateParameters()
     driftVector = remoteControl.GetShipVelocities().LinearVelocity;
     speed = driftVector.Length();
 
-    rpm = remoteControl.GetShipVelocities().AngularVelocity.Dot(refWorldMatrix.Forward) * RPM_FACTOR;
-    lastNormal = refWorldMatrix.Up;
+    rpm = Math.Abs(remoteControl.GetShipVelocities().AngularVelocity.Dot(refWorldMatrix.Forward)) * MathHelper.RadiansPerSecondToRPM;
 
     naturalGravity = remoteControl.GetNaturalGravity();
     naturalGravityLength = naturalGravity.Length();
@@ -1859,7 +1856,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroYaw[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -1868,7 +1865,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroPitch[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -1877,7 +1874,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroRoll[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 

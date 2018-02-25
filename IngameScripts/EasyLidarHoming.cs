@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v17.2
+// ADN - Easy Lidar Homing Script v17.4
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -518,7 +518,7 @@ void Main(string arguments, UpdateType updateSource)
         ProcessMissileCommand(shipRefPanel.CustomData);
     }
 
-    if ((updateSource & UpdateType.Update1) == 0)
+    if ((updateSource & UpdateType.Update1) == 0 || Runtime.TimeSinceLastRun.Ticks == 0)
     {
         return;
     }
@@ -3924,7 +3924,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroYaw[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -3933,7 +3933,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroPitch[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -3942,7 +3942,7 @@ public class GyroControl
         for (int i = 0; i < gyros.Count; i++)
         {
             byte index = gyroRoll[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate));
+            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
