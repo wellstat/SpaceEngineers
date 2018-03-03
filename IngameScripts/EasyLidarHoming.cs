@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v17.4
+// ADN - Easy Lidar Homing Script v17.5
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -46,7 +46,7 @@ bool useOffsetTargeting = false;
 bool useOffsetRaycasting = false;
 
 //For AI Turret lock-on modes. Whether to switch to raycast after AI turret lock-on
-bool switchTurretToRaycast = false;
+bool switchTurretToRaycast = true;
 
 //------------------------------ Inter Grid Communications Configuration ------------------------------
 
