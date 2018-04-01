@@ -5,11 +5,14 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v2.3
+// ADN - Trajectory Missile Script v3.0
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
 int missileDetachPortType = 0;
+
+//Type of missile trajectory: 0 = Frefall To Target With Aiming (For Cluster Bomb Deployments), 1 = Frefall To Target Without Aiming (For Cluster Bomb Deployments), 2 = Thrust And Home In To Target
+int missileTrajectoryType = 0;
 
 //Script will only extract missile blocks on same grid as this PB
 bool missileBlockSameGridOnly = true;
@@ -33,8 +36,6 @@ double driftVectorReduction = 1.5;
 double launchSeconds = 5;
 double missileTravelHeight = 3000;                      //The height in metres the missile will try to reach, measuring from launch point
 
-bool aimAfterDeploy = true;
-
 int missileDeployDistanceCorrection = 0;                //Deploy missile this distance earlier in metres
 string missileDeployCommand = "";
 
@@ -46,6 +47,8 @@ bool? boolNaturalDampener = null;
 
 double MAX_FALL_SPEED = 104.37;                         //Maximum falling speed. If speed mod is used, this is the maximum speed of the speed mod
 int HEIGHT_DEAD_ZONE = 500;                             //Height range above the cruise height where missile will not perform any tangent vector adjustment to prevent oscillation
+
+bool readjustMaxFallSpeed = true;                       //If speed mods are used, user may forget to configure MAX_FALL_SPEED. This flag will attempt to readjust it based on current missile speed
 
 //------------------------------ Above Is User Configuration Section. This Section Is For PID Tuning ------------------------------
 
@@ -410,6 +413,11 @@ void Main(string arguments, UpdateType updateSource)
             AimDampenerAtVector(ref naturalGravity);
         }
 
+        if (readjustMaxFallSpeed && speed > MAX_FALL_SPEED + 0.1)
+        {
+            MAX_FALL_SPEED = speed;
+        }
+
         Vector3D targetHeightVector = (targetPosition - referencePoint);
         double targetHeightLength = targetHeightVector.Length();
         targetHeightVector = targetHeightVector / targetHeightLength;
@@ -433,13 +441,16 @@ void Main(string arguments, UpdateType updateSource)
     }
     else if (mode == 5)
     {
-        DisableAllThrusters();
+        if (missileTrajectoryType <= 1)
+        {
+            DisableAllThrusters();
+        }
 
         ExecuteTargetCommand(missileDeployCommand);
 
         lastTargetPosition = targetPosition;
 
-        if (!aimAfterDeploy)
+        if (missileTrajectoryType == 1)
         {
             gyroControl.ZeroTurnGyro();
         }
@@ -453,10 +464,19 @@ void Main(string arguments, UpdateType updateSource)
         distToTarget = targetVector.Length();
         targetVector = targetVector / distToTarget;
 
+        if (missileTrajectoryType == 2)
+        {
+            if (boolDrift == true && speed >= 5)
+            {
+                targetVector = (targetVector * speed) - (driftVector / driftVectorReduction);
+                targetVector.Normalize();
+            }
+        }
+
         targetVector = Vector3D.TransformNormal(targetVector, refViewMatrix);
         targetVector.Normalize();
 
-        if (aimAfterDeploy)
+        if (missileTrajectoryType != 1)
         {
             AimAtTarget();
         }
@@ -1076,10 +1096,6 @@ void ProcessSingleCommand(string[] tokens)
             savedBlockList[tokens[2]] = triggerBlocks;
         }
     }
-    else if (cmdToken.Equals("AIMAD") && tokens.Length >= 1)
-    {
-        aimAfterDeploy = (tokens.Length >= 2 ? bool.Parse(tokens[1]) : true);
-    }
     else if (cmdToken.Equals("SPIN") && tokens.Length >= 1)
     {
         gyroControl.SetGyroRoll(tokens.Length >= 2 ? Int32.Parse(tokens[1]) : 30);
@@ -1108,6 +1124,7 @@ void ProcessCustomConfiguration()
     cfg.Load();
 
     cfg.Get("missileDetachPortType", ref missileDetachPortType);
+    cfg.Get("missileTrajectoryType", ref missileTrajectoryType);
     cfg.Get("missileBlockSameGridOnly", ref missileBlockSameGridOnly);
     cfg.Get("strGyroscopesTag", ref strGyroscopesTag);
     cfg.Get("strThrustersTag", ref strThrustersTag);
@@ -1119,6 +1136,7 @@ void ProcessCustomConfiguration()
     cfg.Get("missileDeployCommand", ref missileDeployCommand);
     cfg.Get("MAX_FALL_SPEED", ref MAX_FALL_SPEED);
     cfg.Get("HEIGHT_DEAD_ZONE", ref HEIGHT_DEAD_ZONE);
+    cfg.Get("readjustMaxFallSpeed", ref readjustMaxFallSpeed);
     cfg.Get("driftVectorReduction", ref driftVectorReduction);
     cfg.Get("launchSeconds", ref launchSeconds);
     cfg.Get("boolDrift", ref boolDrift);
