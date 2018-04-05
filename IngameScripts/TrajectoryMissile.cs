@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v3.0
+// ADN - Trajectory Missile Script v3.1
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
@@ -479,6 +479,14 @@ void Main(string arguments, UpdateType updateSource)
         if (missileTrajectoryType != 1)
         {
             AimAtTarget();
+        }
+
+        if (missileTrajectoryType == 2)
+        {
+            if (boolNaturalDampener == true)
+            {
+                AimDampenerAtVector(ref naturalGravity);
+            }
         }
 
         distToTarget = (targetPosition - refWorldMatrix.Translation).Length();
