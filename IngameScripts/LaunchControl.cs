@@ -3,12 +3,16 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Launch Control Script v3.0
+// ADN - Launch Control Script v4.0
 //------------------------------------------------------------
 
 string strComputerTag = "Missile Computer";         //Name tag of the Programmable Block loaded with the Easy Lidar Homing Script.
 string strDetachConnectorTag = "";                  //Name tag of the Connector closest to the Programmable Block to Unlock. Set blank to disable.
 string strAdditionalCustomData = "";                //Additional Custom Data to be added to the Missile Programmable Block.
+
+string listenerId = null;
+string listenerGroup = null;
+string allowedSenderId = null;
 
 int launchSelectionType = 2;                        //0 = Any, 1 = Closest, 2 = Furthest
 
@@ -16,9 +20,25 @@ int launchSelectionType = 2;                        //0 = Any, 1 = Closest, 2 = 
 
 void Main(string arguments, UpdateType updateSource)
 {
+    bool initInterGridComms = ((updateSource & UpdateType.Antenna) > 0);
+
+    if (initInterGridComms)
+    {
+        listenerId = Me.GetId().ToString();
+        listenerGroup = null;
+    }
+
     if (Me.CustomData.Length > 0)
     {
-        ProcessCustomConfiguration();
+        ProcessCustomConfiguration(initInterGridComms);
+    }
+
+    if (initInterGridComms)
+    {
+        if (!ProcessCommunicationMessage(ref arguments))
+        {
+            return;
+        }
     }
 
     List<IMyTerminalBlock> blocks = GetBlocksWithName<IMyProgrammableBlock>(strComputerTag);
@@ -68,7 +88,105 @@ void Main(string arguments, UpdateType updateSource)
     }
 }
 
-void ProcessCustomConfiguration()
+bool ProcessCommunicationMessage(ref string message)
+{
+    string[] msgTokens = message.Split(new char[] {'\r','\n'}, StringSplitOptions.RemoveEmptyEntries);
+
+    for (int i = 0; i < msgTokens.Length; i++)
+    {
+        string msg = msgTokens[i];
+
+        string recipient;
+        string sender;
+        string options;     //Not Supported Yet, For Future Use
+
+        int start = msg.IndexOf("MSG;", 0, StringComparison.OrdinalIgnoreCase);
+        if (start > -1)
+        {
+            start += 4;
+
+            recipient = NextToken(msg, ref start, ';');
+            sender = NextToken(msg, ref start, ';');
+            options = NextToken(msg, ref start, ';');
+
+            if (IsValidRecipient(recipient) && IsValidSender(sender))
+            {
+                if (msg.Length > start)
+                {
+                    message = msg.Substring(start);
+
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+bool IsValidRecipient(string recipient)
+{
+    if (recipient.Length == 0)
+    {
+        return true;
+    }
+
+    int code = (recipient[0] == '*' ? 1 : 0) + (recipient[recipient.Length - 1] == '*' ? 2 : 0);
+    switch (code)
+    {
+        case 0:
+            return listenerId.Equals(recipient, StringComparison.OrdinalIgnoreCase) ||
+                    (listenerGroup != null && listenerGroup.Equals(recipient, StringComparison.OrdinalIgnoreCase));
+        case 1:
+            return listenerId.EndsWith(recipient.Substring(1), StringComparison.OrdinalIgnoreCase) ||
+                    (listenerGroup != null && listenerGroup.EndsWith(recipient.Substring(1), StringComparison.OrdinalIgnoreCase));
+        case 2:
+            return listenerId.StartsWith(recipient.Substring(0, recipient.Length - 1), StringComparison.OrdinalIgnoreCase) ||
+                    (listenerGroup != null && listenerGroup.StartsWith(recipient.Substring(0, recipient.Length - 1), StringComparison.OrdinalIgnoreCase));
+        default:
+            return (recipient.Length == 1) || (listenerId.IndexOf(recipient.Substring(1, recipient.Length - 2), StringComparison.OrdinalIgnoreCase) > -1) ||
+                    (listenerGroup != null && (listenerGroup.IndexOf(recipient.Substring(1, recipient.Length - 2), StringComparison.OrdinalIgnoreCase) > -1));
+    }
+}
+
+bool IsValidSender(string sender)
+{
+    if (allowedSenderId == null || allowedSenderId.Length == 0)
+    {
+        return true;
+    }
+
+    int code = (allowedSenderId[0] == '*' ? 1 : 0) + (allowedSenderId[allowedSenderId.Length - 1] == '*' ? 2 : 0);
+    switch (code)
+    {
+        case 0:
+            return sender.Equals(allowedSenderId, StringComparison.OrdinalIgnoreCase);
+        case 1:
+            return sender.EndsWith(allowedSenderId.Substring(1), StringComparison.OrdinalIgnoreCase);
+        case 2:
+            return sender.StartsWith(allowedSenderId.Substring(0, allowedSenderId.Length - 1), StringComparison.OrdinalIgnoreCase);
+        default:
+            return (allowedSenderId.Length == 1) || (sender.IndexOf(allowedSenderId.Substring(1, allowedSenderId.Length - 2), StringComparison.OrdinalIgnoreCase) > -1);
+    }
+}
+
+string NextToken(string line, ref int start, char delim)
+{
+    if (line.Length > start)
+    {
+        int end = line.IndexOf(delim, start);
+        if (end > -1)
+        {
+            string result = line.Substring(start, end - start);
+            start = end + 1;
+            return result;
+        }
+    }
+    start = line.Length;
+    return "";
+}
+
+void ProcessCustomConfiguration(bool initInterGridComms = false)
 {
     CustomConfiguration cfg = new CustomConfiguration(Me);
     cfg.Load();
@@ -77,6 +195,13 @@ void ProcessCustomConfiguration()
     cfg.Get("strDetachConnectorTag", ref strDetachConnectorTag);
     cfg.Get("strAdditionalCustomData", ref strAdditionalCustomData);
     cfg.Get("launchSelectionType", ref launchSelectionType);
+
+    if (initInterGridComms)
+    {
+        cfg.Get("listenerId", ref listenerId);
+        cfg.Get("listenerGroup", ref listenerGroup);
+        cfg.Get("allowedSenderId", ref allowedSenderId);
+    }
 }
 
 IMyTerminalBlock ReturnAny(List<IMyTerminalBlock> blocks)
