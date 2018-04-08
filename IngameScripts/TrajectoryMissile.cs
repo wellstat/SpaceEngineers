@@ -1148,6 +1148,7 @@ void ProcessCustomConfiguration()
     cfg.Get("missileDetachPortType", ref missileDetachPortType);
     cfg.Get("missileTrajectoryType", ref missileTrajectoryType);
     cfg.Get("missileBlockSameGridOnly", ref missileBlockSameGridOnly);
+    cfg.Get("strShipRefTargetPanel", ref strShipRefTargetPanel);
     cfg.Get("strGyroscopesTag", ref strGyroscopesTag);
     cfg.Get("strThrustersTag", ref strThrustersTag);
     cfg.Get("strDetachPortTag", ref strDetachPortTag);
