@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v3.2
+// ADN - Trajectory Missile Script v3.3
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
@@ -249,6 +249,8 @@ void Main(string arguments, UpdateType updateSource)
                 throw new Exception("--- Initialization Failed ---");
             }
         }
+
+        gyroControl.Enabled(true);
 
         lastPosition = refWorldMatrix.Translation;
 
@@ -1875,6 +1877,14 @@ public class GyroControl
         foreach (IMyGyro gyro in gyros)
         {
             gyro.ApplyAction(actionName);
+        }
+    }
+
+    public void Enabled(bool enabled)
+    {
+        foreach (IMyGyro gyro in gyros)
+        {
+            gyro.Enabled = enabled;
         }
     }
 
