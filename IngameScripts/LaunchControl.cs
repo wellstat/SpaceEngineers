@@ -113,9 +113,14 @@ bool ProcessCommunicationMessage(ref string message)
             {
                 if (msg.Length > start)
                 {
-                    message = msg.Substring(start);
+                    string command = NextToken(msg, ref start, ':').Trim();
 
-                    return true;
+                    if (command.Equals("LAUNCH", StringComparison.OrdinalIgnoreCase) && msg.Length > start)
+                    {
+                        message = msg.Substring(start);
+
+                        return true;
+                    }
                 }
             }
         }
