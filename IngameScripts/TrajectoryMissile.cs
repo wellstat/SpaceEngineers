@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v3.1
+// ADN - Trajectory Missile Script v3.2
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
@@ -786,6 +786,18 @@ bool DetachFromGrid(bool testOnly = false)
                 {
                     detachBlock = blocks[i];
                     break;
+                }
+            }
+
+            if (detachBlock == null)
+            {
+                for (int i = 0; i < blocks.Count; i++)
+                {
+                    if (blocks[i].CubeGrid == Me.CubeGrid)
+                    {
+                        detachBlock = blocks[i];
+                        break;
+                    }
                 }
             }
 
