@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Trajectory Missile Script v3.3
+// ADN - Trajectory Missile Script v3.4
 //------------------------------------------------------------
 
 //Type of block to disconnect missile from launching ship: 0 = Merge Block, 1 = Rotor, 2 = Connector, 3 = Merge Block And Any Locked Connectors, 4 = Rotor And Any Locked Connectors, 99 = No detach required
@@ -124,6 +124,8 @@ double timeToImpact;
 PIDController yawController;
 PIDController pitchController;
 PIDController rollController;
+
+bool spinActive = false;
 
 int subCounter = 0;
 int subMode = 0;
@@ -483,7 +485,7 @@ void Main(string arguments, UpdateType updateSource)
             AimAtTarget();
         }
 
-        if (missileTrajectoryType == 2)
+        if (missileTrajectoryType == 2 && !spinActive)
         {
             if (boolNaturalDampener == true)
             {
@@ -1121,6 +1123,7 @@ void ProcessSingleCommand(string[] tokens)
     else if (cmdToken.Equals("SPIN") && tokens.Length >= 1)
     {
         gyroControl.SetGyroRoll(tokens.Length >= 2 ? Int32.Parse(tokens[1]) : 30);
+        spinActive = true;
     }
     else if (cmdToken.Equals("ZTH"))
     {
