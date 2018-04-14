@@ -5,7 +5,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Sogeki Lidar Weapon Script v3.3
+// ADN - Sogeki Lidar Weapon Script v3.4
 //------------------------------------------------------------
 
 const string LIDAR_BLOCK_TAG = "Lidar";                 //Tag of Cameras to be used as Lidars
@@ -967,9 +967,9 @@ Vector3D ComputeInterceptPointWithInheritSpeed(Vector3D targetLocation, Vector3D
         currentDirection += stepAcceleration;
 
         double speed = currentDirection.Length();
-        if (speed > 200)
+        if (speed > projectileMaxSpeed)
         {
-            currentDirection = currentDirection / speed * 200;
+            currentDirection = currentDirection / speed * projectileMaxSpeed;
         }
 
         currentPosition += (currentDirection / 60);
