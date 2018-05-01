@@ -337,6 +337,17 @@
         NextRaycastReadyClock = nextRaycastReadyRefresh = t_AimReserves = t_offsetHitCount = 0;
     }
 
+    //Use this method and pass in the Runtime object from your main script to allow this class to take care of its internal clock and timing
+    public void Update(IMyGridProgramRuntimeInfo runtime)
+    {
+        long ticks = runtime.TimeSinceLastRun.Ticks;
+        if (ticks > 0)
+        {
+            clock += (int)Math.Round(ticks * 0.000006f);
+            Update();
+        }
+    }
+
     //In case any Update() is missed, use this method to recorrect the internal clock
     public void Update(int newClock)
     {
