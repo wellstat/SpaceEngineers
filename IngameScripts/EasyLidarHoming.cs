@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v20.0
+// ADN - Easy Lidar Homing Script v21.0
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -100,10 +100,11 @@ float LIDAR_REFRESH_CALC_FACTOR = 0.85f;
 double launchSeconds = 1;
 
 bool boolNaturalDampener = true;
+bool boolCompensateDampener = true;
 
 //------------------------------ Proportional Navigation And PID Tuning ------------------------------
 
-double PROP_NAV_CONSTANT = 25;
+double THRUST_ESTIMATE_FACTOR = 0.75;
 
 double AIM_P = 0;
 double AIM_I = 0;
@@ -228,6 +229,7 @@ int lastTargetPositionClock;
 Vector3D targetVector;
 double distToTarget;
 
+Vector3D targetAcceleration;
 Vector3D targetDirection;
 double targetSpeed;
 double targetRadius;
@@ -269,7 +271,7 @@ Program()
 void Main(string arguments, UpdateType updateSource)
 {
     //---------- Initialization And General Controls ----------
-    
+
     if (!init)
     {
         if (subMode == 0)  //Check for configuration command
@@ -278,10 +280,10 @@ void Main(string arguments, UpdateType updateSource)
             {
                 return;
             }
-            
+
             subCounter = 0;
             subMode = 1;
-            
+
             missileId = Me.GetId().ToString();
             missileGroup = null;
 
@@ -291,7 +293,7 @@ void Main(string arguments, UpdateType updateSource)
             }
 
             if (spinAmount > 0) spinAmount *= MathHelper.RPMToRadiansPerSecond;
-            
+
             if (raycastAheadCount > 0 && raycastAheadSeconds == 0f)
             {
                 raycastAheadSeconds = 0.5f;
@@ -306,7 +308,7 @@ void Main(string arguments, UpdateType updateSource)
             {
                 Runtime.UpdateFrequency = UpdateFrequency.Update1;
             }
-            
+
             return;
         }
         else if (subMode == 1)  //Missile still on launching ship's grid
@@ -363,7 +365,7 @@ void Main(string arguments, UpdateType updateSource)
             {
                 isDetached = ((detachBlock as IMyShipConnector).Status != MyShipConnectorStatus.Connected);
             }
-            
+
             if (isDetached)
             {
                 subCounter = 0;
@@ -379,7 +381,7 @@ void Main(string arguments, UpdateType updateSource)
                     Echo("Error: Missile detach failed.");
                     throw new Exception("--- Initialization Failed ---");
                 }
-                
+
                 return;
             }
         }
@@ -433,7 +435,7 @@ void Main(string arguments, UpdateType updateSource)
                 }
             }
         }
-        
+
         if (fwdThrusters != null)
         {
             foreach (IMyThrust thrust in fwdThrusters)
@@ -485,19 +487,19 @@ void Main(string arguments, UpdateType updateSource)
 
                 subCounter = (int)(launchSeconds * SECOND);
             }
-            
+
             FireThrusters(verticalTakeoff ? launchThrusters : fwdThrusters, true);
-            
+
             mode = -1;
         }
-        
+
         if (IsNotEmpty(missileActivationCommands))
         {
             ExecuteTriggerCommand(missileActivationCommands);
         }
 
         isLidarMode = "0,1,2,5,7,8,9,10".Contains(missileLaunchType.ToString());
-        
+
         subMode = 0;
         clock = 0;
 
@@ -506,7 +508,7 @@ void Main(string arguments, UpdateType updateSource)
     }
 
     //---------- Modes And Controls ----------
-    
+
     if (arguments.Length > 0)
     {
         ProcessCommunicationMessage(arguments);
@@ -547,14 +549,14 @@ void Main(string arguments, UpdateType updateSource)
                 FireThrusters(launchThrusters, false);
                 FireThrusters(fwdThrusters, true);
             }
-                
+
             gyroControl.SetGyroOverride(true);
 
             if (spinAmount > 0)
             {
                 gyroControl.SetGyroRoll(spinAmount);
             }
-            
+
             distToTarget = 1000000;
 
             if (missileLaunchType == 3 || missileLaunchType == 4 || missileLaunchType == 6)
@@ -579,7 +581,7 @@ void Main(string arguments, UpdateType updateSource)
             if (nextLidarTriggerTicks <= clock || commsLidarTargetSet)
             {
                 bool targetFound = false;
-                
+
                 if (commsLidarTargetSet)
                 {
                     commsLidarTargetSet = false;
@@ -590,7 +592,7 @@ void Main(string arguments, UpdateType updateSource)
                 {
                     targetFound = PerformPreLock(shipRefLidars, shipRefFwd, fwdIsTurret);
                 }
-                
+
                 if (targetFound)
                 {
                     targetFound = false;
@@ -611,7 +613,7 @@ void Main(string arguments, UpdateType updateSource)
                                 targetFound = true;
                             }
                         }
-                        
+
                         if (!targetFound && !useOffsetRaycasting)
                         {
                             lidarPosition = lidarTargetInfo.HitPosition.Value;
@@ -689,7 +691,7 @@ void Main(string arguments, UpdateType updateSource)
                 lastTargetPosition = targetPosition = GetFlyStraightVector();
                 targetPositionSet = false;
             }
-            
+
             if (targetPositionSet)
             {
                 if (nextLidarTriggerTicks <= clock)
@@ -729,7 +731,7 @@ void Main(string arguments, UpdateType updateSource)
             if (commsFwdSet)
             {
                 commsFwdSet = false;
-                
+
                 refFwdPosition = commsFwd.Position;
                 refFwdVector = commsFwd.Direction;
             }
@@ -739,12 +741,12 @@ void Main(string arguments, UpdateType updateSource)
                 refFwdVector = (fwdIsTurret ? CalculateTurretViewVector(shipRefFwd as IMyLargeTurretBase) : shipRefFwd.WorldMatrix.Forward);
             }
 
-            PerformCameraGuidanceOperations();
-            
+            SetCameraGuidanceParameters();
+
             if (nextLidarTriggerTicks <= clock)
             {
                 Vector3D shipRefTargetPosition = refFwdPosition + (refFwdVector * LIDAR_MAX_LOCK_DISTANCE);
-                
+
                 if (PerformPreLock(missileLidars, ref refWorldMatrix, ref refFwdVector, ref shipRefTargetPosition))
                 {
                     TransitToFullLock();
@@ -754,16 +756,16 @@ void Main(string arguments, UpdateType updateSource)
         else if (subMode == 1)  //Lidar Homing
         {
             PerformLidarLogic();
-
-            PerformCommonOperations();
         }
+
+        PerformCommonOperations();
     }
     else if (mode == 3)  //Camera Guided Mode
     {
         if (commsFwdSet)
         {
             commsFwdSet = false;
-                
+
             refFwdPosition = commsFwd.Position;
             refFwdVector = commsFwd.Direction;
         }
@@ -772,8 +774,10 @@ void Main(string arguments, UpdateType updateSource)
             refFwdPosition = shipRefFwd.WorldMatrix.Translation;
             refFwdVector = (fwdIsTurret ? CalculateTurretViewVector(shipRefFwd as IMyLargeTurretBase) : shipRefFwd.WorldMatrix.Forward);
         }
-        
-        PerformCameraGuidanceOperations();
+
+        SetCameraGuidanceParameters();
+
+        PerformCommonOperations();
     }
     else if (mode == 4)  //Cruise Mode
     {
@@ -793,7 +797,7 @@ void Main(string arguments, UpdateType updateSource)
                 targetPositionSet = true;
             }
         }
-        
+
         CalculateTargetInfo();
 
         PerformCommonOperations();
@@ -805,7 +809,7 @@ void Main(string arguments, UpdateType updateSource)
             if (commsFwdSet)
             {
                 commsFwdSet = false;
-                
+
                 refFwdPosition = commsFwd.Position;
                 refFwdVector = commsFwd.Direction;
                 refFwdSet = true;
@@ -817,8 +821,10 @@ void Main(string arguments, UpdateType updateSource)
                 refFwdSet = true;
             }
         }
-        
-        PerformCameraGuidanceOperations();
+
+        SetCameraGuidanceParameters();
+
+        PerformCommonOperations();
     }
     else if (mode == 7)  //Lidar Homing With Shipborne Lidar Lock-On (Semi-Active Style Guidance)
     {
@@ -829,7 +835,7 @@ void Main(string arguments, UpdateType updateSource)
                 if (commsLidarTargetSet)
                 {
                     commsLidarTargetSet = false;
-                    
+
                     if (CheckAndSetValidLidarTarget(ref commsLidarTarget, ref refWorldMatrix))
                     {
                         TransitToFullLock();
@@ -857,7 +863,7 @@ void Main(string arguments, UpdateType updateSource)
         else if (subMode == 1)  //Lidar Homing
         {
             targetPosition = lidarTargetInfo.Position + (lidarTargetInfo.Velocity / SECOND * (clock - lastTargetPositionClock));
-    
+
             if (nextLidarTriggerTicks <= clock || commsLidarTargetSet)
             {
                 bool targetFound = false;
@@ -910,7 +916,7 @@ void Main(string arguments, UpdateType updateSource)
 
                 targetPositionSet = targetFound;
             }
-            
+
             if (useOffsetTargeting)
             {
                 targetPosition += Vector3D.TransformNormal(offsetTargetPosition, lidarTargetInfo.Orientation);
@@ -921,8 +927,6 @@ void Main(string arguments, UpdateType updateSource)
     }
     else if (mode == 8 || mode == 9 || mode == 5)  //Turret AI Homing
     {
-        bool cameraGuidanceMode = false;
-        
         if (subMode == 0)  //Initialization
         {
             if (mode == 5)
@@ -940,7 +944,7 @@ void Main(string arguments, UpdateType updateSource)
                 homingTurret.EnableIdleRotation = false;
                 homingTurret.SetValueFloat("Range", homingTurret.GetMaximum<float>("Range"));
                 homingTurret.Enabled = true;
-                
+
                 if (refFwdVector.Sum == 0)
                 {
                     targetPosition = refWorldMatrix.Translation + (refWorldMatrix.Forward * 1000000);
@@ -971,7 +975,7 @@ void Main(string arguments, UpdateType updateSource)
             if (homingTurret.HasTarget)
             {
                 SetHomingTurretLidarTarget();
-                
+
                 offsetTargetPosition = offsetRaycastPosition = Vector3D.Zero;
 
                 if (IsNotEmpty(missileTriggerCommands))
@@ -987,7 +991,7 @@ void Main(string arguments, UpdateType updateSource)
                 if (commsFwdSet)
                 {
                     commsFwdSet = false;
-                
+
                     refFwdPosition = commsFwd.Position;
                     refFwdVector = commsFwd.Direction;
                 }
@@ -996,8 +1000,8 @@ void Main(string arguments, UpdateType updateSource)
                     refFwdPosition = shipRefFwd.WorldMatrix.Translation;
                     refFwdVector = (fwdIsTurret ? CalculateTurretViewVector(shipRefFwd as IMyLargeTurretBase) : shipRefFwd.WorldMatrix.Forward);
                 }
-        
-                cameraGuidanceMode = true;
+
+                SetCameraGuidanceParameters();
             }
         }
         else if (subMode == 2)  //Turret Target Locked
@@ -1024,16 +1028,9 @@ void Main(string arguments, UpdateType updateSource)
             }
         }
 
-        if (cameraGuidanceMode)
-        {
-            PerformCameraGuidanceOperations();
-        }
-        else
-        {
-            PerformCommonOperations();
-        }
+        PerformCommonOperations();
     }
-    
+
     if (statusDisplay != null)
     {
         if (mode == -2)
@@ -1195,7 +1192,7 @@ bool NameContains(IMyTerminalBlock block, string nameTag)
 void CalculateParameters()
 {
     //---------- Calculate Missile Related Variables ----------
-    
+
     refWorldMatrix = refFwdBlock.WorldMatrix;
     if (refFwdReverse)
     {
@@ -1228,7 +1225,7 @@ void CalculateParameters()
         naturalGravity = shipVelocity;
         naturalGravityLength = naturalGravity.Length();
         naturalGravity = (naturalGravityLength > 0 ? naturalGravity / naturalGravityLength : Vector3D.Zero);
-        
+
         rpm = Math.Acos(lastNormal.Dot(refWorldMatrix.Up)) * RPM_FACTOR;
         lastNormal = refWorldMatrix.Up;
     }
@@ -1238,14 +1235,17 @@ void CalculateTargetInfo()
 {
     if (targetPositionSet)
     {
+        double deltaTimeRS = SECOND / (clock - lastTargetPositionClock);
+        Vector3D prevVelocity = targetDirection * targetSpeed;
+
         targetDirection = targetPosition - lastTargetPosition;
         targetSpeed = targetDirection.Length();
-
         if (targetSpeed > 0)
         {
             targetDirection = targetDirection / targetSpeed;
-            targetSpeed = targetSpeed * SECOND / (clock - lastTargetPositionClock);
+            targetSpeed = targetSpeed * deltaTimeRS;
         }
+        targetAcceleration = ((targetDirection * targetSpeed) - prevVelocity) * deltaTimeRS;
 
         lastTargetPosition = targetPosition;
         lastTargetPositionClock = clock;
@@ -1258,71 +1258,40 @@ void CalculateTargetInfo()
     }
 }
 
+void SetCameraGuidanceParameters()
+{
+    Vector3D shipToMissileVector = midPoint - refFwdPosition;
+    Vector3D viewLineToMissileVector = Vector3D.Reject(shipToMissileVector, refFwdVector);
+
+    double extraDistanceExtend = (speed * 2) + (shipToMissileVector - viewLineToMissileVector).Length();
+
+    targetPosition = refFwdPosition + (refFwdVector * extraDistanceExtend);
+}
+
 void CalculateNavigationParameters()
 {
     Vector3D rangeVector = targetPosition - midPoint;
     Vector3D velocityVector = (targetDirection * targetSpeed) - shipVelocity;
-    Vector3D rotationVector = Vector3D.Cross(rangeVector, velocityVector) / Vector3D.Dot(rangeVector, rangeVector);
-    Vector3D accelerationVector = PROP_NAV_CONSTANT * Vector3D.Cross(velocityVector, rotationVector);
+    Vector3D accelerationVector = targetAcceleration;
+    if (refDwdBlock == null && naturalGravityLength > 0.1 && boolCompensateDampener)
+    {
+        accelerationVector -= naturalGravity * naturalGravityLength;
+    }
+    double missileAcceleration = CalculateThrustAcceleration();
+
+    double a = 0.25 * (accelerationVector.LengthSquared() - (missileAcceleration * missileAcceleration));
+    double b = accelerationVector.Dot(velocityVector);
+    double c = accelerationVector.Dot(rangeVector) + velocityVector.Dot(velocityVector);
+    double d = 2 * rangeVector.Dot(velocityVector);
+    double e = rangeVector.Dot(rangeVector);
+
+    double t = Solver.Solve(a, b, c, d, e);
+    if (t == double.MaxValue) t = 1000;
 
     distToTarget = rangeVector.Length();
 
-    targetVector = Vector3D.Normalize(shipVelocity + accelerationVector);
-    targetVector = Vector3D.TransformNormal(targetVector, refViewMatrixUnclean4thCol);
-    targetVector.Normalize();
-}
-
-void CalculateCameraGuidanceParameters()
-{
-    Vector3D shipToMissileVector = midPoint - refFwdPosition;
-    Vector3D missileToViewLineVector = -Vector3D.Reject(shipToMissileVector, refFwdVector);
-
-    double extraDistanceExtend = (speed * 2) + (shipToMissileVector + missileToViewLineVector).Length();
-
-    if (refDwdBlock == null && naturalGravityLength > 0.1)
-    {
-        missileToViewLineVector -= Vector3D.Reject(missileToViewLineVector, naturalGravity);
-        if (missileToViewLineVector.Dot(naturalGravity) < 0)
-        {
-	        targetPosition = refFwdPosition + (refFwdVector * extraDistanceExtend) - (naturalGravity * naturalGravityLength);
-        }
-        else
-        {
-	        targetPosition = refFwdPosition + (refFwdVector * extraDistanceExtend);
-        }
-    }
-    else
-    {
-        targetPosition = refFwdPosition + (refFwdVector * extraDistanceExtend);
-    }
-
-    targetPositionSet = true;
-    
-    targetVector = targetPosition - midPoint;
-    distToTarget = targetVector.Length();
-    targetVector = targetVector / distToTarget;
-    
-    Vector3D sideDrift = Vector3D.Reject(shipVelocity, targetVector);
-    double sideSpeed = sideDrift.Length();
-    if (sideSpeed >= 0.0001)
-    {
-        sideDrift = sideDrift / sideSpeed;
-            
-        double acceleration = CalculateThrustAcceleration();
-        if (refDwdBlock != null && naturalGravityLength > 0.01)
-        {
-            acceleration -= Math.Max(sideDrift.Dot(naturalGravity) * naturalGravityLength, 0);
-            if (acceleration < MIN_THRUST_ACCELERATION)
-            {
-                acceleration = MIN_THRUST_ACCELERATION;
-            }
-        }
-        double dotProduct = Math.Min((sideSpeed * speed * 2) / (acceleration * distToTarget), 0.999);
-            
-        targetVector -= (sideDrift * dotProduct) / Math.Sqrt(1 - (dotProduct * dotProduct));
-        targetVector.Normalize();
-    }
-
+    Vector3D interceptPoint = targetPosition + (velocityVector * t) + (0.5 * accelerationVector * t * t);
+    targetVector = Vector3D.Normalize(interceptPoint - midPoint);
     targetVector = Vector3D.TransformNormal(targetVector, refViewMatrixUnclean4thCol);
     targetVector.Normalize();
 }
@@ -1344,7 +1313,7 @@ double CalculateThrustAcceleration()
             {
                 totalThrust += thruster.MaxEffectiveThrust;
             }
-        
+
             thrustAcceleration = totalThrust / remoteControl.CalculateShipMass().TotalMass;
             if (double.IsNaN(thrustAcceleration) || double.IsInfinity(thrustAcceleration) || thrustAcceleration < MIN_THRUST_ACCELERATION)
             {
@@ -1353,7 +1322,7 @@ double CalculateThrustAcceleration()
         }
     }
 
-    return thrustAcceleration;
+    return thrustAcceleration * THRUST_ESTIMATE_FACTOR;
 }
 
 Vector3D CalculateTurretViewVector(IMyLargeTurretBase turret)
@@ -1424,7 +1393,7 @@ bool PerformPreLock(List<IMyCameraBlock> lidars, ref MatrixD worldMatrix, ref Ve
                 lidarCount = 1;
             }
             Vector3D[] refPoints = SpreadRaycastPoint(ref targetPoint, ref fwdVector, LIDAR_MAX_LOCK_DISTANCE, lidarCount);
-                        
+
             for (int i = 0; i < lidarCount; i++)
             {
                 MyDetectedEntityInfo entityInfo = aimLidars[i].Raycast(refPoints[i]);
@@ -1442,7 +1411,7 @@ bool PerformPreLock(List<IMyCameraBlock> lidars, ref MatrixD worldMatrix, ref Ve
     {
         targetPosition = lidarTargetInfo.Position + (lidarTargetInfo.Velocity / SECOND * (clock - lastTargetPositionClock));
         double overshootDistance = targetRadius / 2;
-        
+
         IMyCameraBlock aimLidar = GetLidarAndRecountTicks(lidars, ref targetPosition, overshootDistance, lidarStaggerIndex++, ref worldMatrix);
         if (aimLidar != null)
         {
@@ -1467,7 +1436,7 @@ bool PerformPreLock(List<IMyCameraBlock> lidars, ref MatrixD worldMatrix, ref Ve
 void PerformLidarLogic()
 {
     targetPosition = lidarTargetInfo.Position + (lidarTargetInfo.Velocity / SECOND * (clock - lastTargetPositionClock));
-    
+
     if (nextLidarTriggerTicks <= clock)
     {
         bool targetFound = false;
@@ -1485,7 +1454,7 @@ void PerformLidarLogic()
             {
                 CheckAndUpdateLidarTarget(ref entityInfo, ref targetFound);
             }
-            
+
             if (!targetFound && !useOffsetRaycasting)
             {
                 lidarPosition = targetPosition + Vector3D.TransformNormal(offsetRaycastPosition, lidarTargetInfo.Orientation);
@@ -1521,11 +1490,15 @@ bool CheckAndSetValidLidarTarget(ref MyDetectedEntityInfo entityInfo, ref Matrix
 {
     if (IsValidLidarTarget(ref entityInfo, ref shipRefWorldMatrix))
     {
+        double deltaTimeRS = SECOND / (clock - lastTargetPositionClock);
+        Vector3D prevVelocity = targetDirection * targetSpeed;
+
         distToTarget = Vector3D.Distance(entityInfo.Position, refWorldMatrix.Translation);
         targetSpeed = entityInfo.Velocity.Length();
         targetDirection = (targetSpeed > 0 ? new Vector3D(entityInfo.Velocity) / targetSpeed : new Vector3D());
         targetRadius = Vector3D.Distance(entityInfo.BoundingBox.Min, entityInfo.BoundingBox.Max);
-        
+        targetAcceleration = ((targetDirection * targetSpeed) - prevVelocity) * deltaTimeRS;
+
         if (entityInfo.HitPosition.HasValue)
         {
             offsetTargetPosition = offsetRaycastPosition = Vector3D.TransformNormal(entityInfo.HitPosition.Value - entityInfo.Position, MatrixD.Transpose(entityInfo.Orientation));
@@ -1534,7 +1507,7 @@ bool CheckAndSetValidLidarTarget(ref MyDetectedEntityInfo entityInfo, ref Matrix
         {
             offsetTargetPosition = offsetRaycastPosition = Vector3D.Zero;
         }
-                        
+
         lidarTargetInfo = entityInfo;
         lastTargetPositionClock = clock;
 
@@ -1553,10 +1526,14 @@ void CheckAndUpdateLidarTarget(ref MyDetectedEntityInfo entityInfo, ref bool tar
 {
     if (entityInfo.EntityId == lidarTargetInfo.EntityId)
     {
+        double deltaTimeRS = SECOND / (clock - lastTargetPositionClock);
+        Vector3D prevVelocity = targetDirection * targetSpeed;
+
         distToTarget = Vector3D.Distance(entityInfo.Position, refWorldMatrix.Translation);
         targetSpeed = entityInfo.Velocity.Length();
         targetDirection = (targetSpeed > 0 ? new Vector3D(entityInfo.Velocity) / targetSpeed : new Vector3D());
         targetRadius = Vector3D.Distance(entityInfo.BoundingBox.Min, entityInfo.BoundingBox.Max);
+        targetAcceleration = ((targetDirection * targetSpeed) - prevVelocity) * deltaTimeRS;
 
         if (useOffsetRaycasting && entityInfo.HitPosition.HasValue)
         {
@@ -1575,9 +1552,12 @@ void SetHomingTurretLidarTarget()
 {
     MyDetectedEntityInfo entityInfo = homingTurret.GetTargetedEntity();
 
+    Vector3D prevVelocity = targetDirection * targetSpeed;
+
     distToTarget = Vector3D.Distance(entityInfo.Position, refWorldMatrix.Translation);
     targetSpeed = entityInfo.Velocity.Length();
     targetDirection = (targetSpeed > 0 ? new Vector3D(entityInfo.Velocity) / targetSpeed : new Vector3D());
+    targetAcceleration = ((targetDirection * targetSpeed) - prevVelocity) * SECOND;
 
     lidarTargetInfo = entityInfo;
     lastTargetPositionClock = clock;
@@ -1627,32 +1607,6 @@ void PerformCommonOperations()
     }
 }
 
-void PerformCameraGuidanceOperations()
-{
-    CalculateCameraGuidanceParameters();
-    AimAtTarget();
-
-    if (adjustThrustBasedOnAim)
-    {
-        AdjustThrustBasedOnAim();
-    }
-
-    if (boolNaturalDampener)
-    {
-        AimAtNaturalGravity();
-    }
-
-    if (haveTriggerCommands)
-    {
-        ProcessTriggerCommands();
-    }
-
-    if (hasProximitySensors)
-    {
-        CheckProximitySensors();
-    }
-}
-
 List<IMyCameraBlock> GetAvailableLidars(List<IMyCameraBlock> lidars, ref Vector3D aimPoint, double overshootDistance, int indexOffset, int lidarCount)
 {
     List<IMyCameraBlock> result = new List<IMyCameraBlock>(lidarCount);
@@ -1660,7 +1614,7 @@ List<IMyCameraBlock> GetAvailableLidars(List<IMyCameraBlock> lidars, ref Vector3
     for (int i = 0; i < lidars.Count; i++)
     {
         IMyCameraBlock lidar = lidars[(i + indexOffset) % lidars.Count];
-        
+
         Vector3D adjustedAimPoint;
         if (overshootDistance == 0)
         {
@@ -1789,15 +1743,15 @@ void AimAtTarget()
     //This is NOT True Azimuth and Elevation. Pitch can be more than 90 degrees for improved oversteer.
     double yawInput = Math.Acos(yawVector.Dot(Vector3D.Forward)) * GetMultiplierSign(targetVector.GetDim(0));
     double pitchInput = Math.Acos(pitchVector.Dot(Vector3D.Forward)) * GetMultiplierSign(targetVector.GetDim(1));
-    
+
     //---------- PID Controller Adjustment ----------
-    
+
     if (double.IsNaN(yawInput)) yawInput = 0;
     if (double.IsNaN(pitchInput)) pitchInput = 0;
-    
+
     yawInput = yawController.Filter(yawInput, 2);
     pitchInput = pitchController.Filter(pitchInput, 2);
-    
+
     if (Math.Abs(yawInput) + Math.Abs(pitchInput) > AIM_LIMIT)
     {
         double adjust = AIM_LIMIT / (Math.Abs(yawInput) + Math.Abs(pitchInput));
@@ -1806,7 +1760,7 @@ void AimAtTarget()
     }
 
     //---------- Set Gyroscope Parameters ----------
-    
+
     gyroControl.SetGyroYaw((float)yawInput);
     gyroControl.SetGyroPitch((float)pitchInput);
 }
@@ -1814,29 +1768,26 @@ void AimAtTarget()
 void AimAtNaturalGravity()
 {
     //---------- Activate Gyroscopes To Aim Dampener At Natural Gravity ----------
-    
+
     if (refDwdBlock == null || naturalGravityLength < 0.01)
     {
         return;
     }
-    
+
     MatrixD dampenerLookAtMatrix = MatrixD.CreateLookAt(Vector3D.Zero, refDwdBlock.WorldMatrix.Forward, refWorldMatrix.Forward);
 
     Vector3D gravityVector = Vector3D.TransformNormal(naturalGravity, dampenerLookAtMatrix);
     gravityVector.SetDim(1, 0);
     gravityVector.Normalize();
 
-    if (double.IsNaN(gravityVector.Sum))
-    {
-        gravityVector = Vector3D.Forward;
-    }
-
     double rollInput = Math.Acos(gravityVector.Dot(Vector3D.Forward)) * GetMultiplierSign(gravityVector.GetDim(0));
-    
+
     //---------- PID Controller Adjustment ----------
-    
+
+    if (double.IsNaN(rollInput)) rollInput = 0;
+
     rollInput = rollController.Filter(rollInput, 2);
-    
+
     //---------- Set Gyroscope Parameters ----------
 
     gyroControl.SetGyroRoll((float)rollInput);
@@ -2030,7 +1981,7 @@ bool ParseMatrix(string[] tokens, out MatrixD parsedMatrix, int start = 0, bool 
             r[i] = v;
         }
     }
-    
+
     if (isOrientation)
     {
         parsedMatrix = new MatrixD(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
@@ -2046,7 +1997,7 @@ bool ParseMatrix(string[] tokens, out MatrixD parsedMatrix, int start = 0, bool 
 bool ParseVector(string[] tokens, out Vector3D parsedVector, int start = 0)
 {
     parsedVector = new Vector3D();
-    
+
     if (tokens.Length < start + 3)
     {
         return false;
@@ -2142,7 +2093,7 @@ bool ParseCoordinates(string coordinates, out Vector3D parsedVector)
         {
             return false;
         }
-        
+
         if (double.TryParse(tokens[3].Substring(0, tokens[3].Length - 1), out result))
         {
             parsedVector.SetDim(2, result);
@@ -2166,7 +2117,7 @@ void ProcessCustomConfiguration()
 {
     CustomConfiguration cfg = new CustomConfiguration(Me);
     cfg.Load();
-    
+
     cfg.Get("missileLaunchType", ref missileLaunchType);
     cfg.Get("missileDetachPortType", ref missileDetachPortType);
     cfg.Get("spinAmount", ref spinAmount);
@@ -2209,7 +2160,7 @@ void ProcessCustomConfiguration()
     cfg.Get("LIDAR_MAX_LOCK_DISTANCE", ref LIDAR_MAX_LOCK_DISTANCE);
     cfg.Get("LIDAR_REFRESH_INTERVAL", ref LIDAR_REFRESH_INTERVAL);
     cfg.Get("LIDAR_REFRESH_CALC_FACTOR", ref LIDAR_REFRESH_CALC_FACTOR);
-    cfg.Get("PROP_NAV_CONSTANT", ref PROP_NAV_CONSTANT);
+    cfg.Get("THRUST_ESTIMATE_FACTOR", ref THRUST_ESTIMATE_FACTOR);
     cfg.Get("AIM_P", ref AIM_P);
     cfg.Get("AIM_I", ref AIM_I);
     cfg.Get("AIM_D", ref AIM_D);
@@ -2380,8 +2331,8 @@ void ProcessTriggerCommands()
 void CheckProximitySensors()
 {
     int curfailunsafe = 0;
-    
-    
+
+
     for (int i = 0; i < proximitySensors.Count; i++)
     {
         ProximitySensor sensor = proximitySensors[i];
@@ -2392,7 +2343,7 @@ void CheckProximitySensors()
         {
             dist = speed / SECOND;
         }
-        
+
         if (sensor.lidar.IsWorking && sensor.lidar.CanScan(dist))
         {
             if (sensor.dmsrange > dist && sensor.lidar.CanScan(sensor.dmsrange))
@@ -2467,7 +2418,7 @@ void CheckProximitySensors()
             }
         }
     }
-    
+
     if (failunsafeGrpCnt > 0 && curfailunsafe >= failunsafeGrpCnt)
     {
         string failunsafeCmd = null;
@@ -2527,7 +2478,7 @@ bool IsValidRecipient(string recipient)
     {
         return true;
     }
-    
+
     int code = (recipient[0] == '*' ? 1 : 0) + (recipient[recipient.Length - 1] == '*' ? 2 : 0);
     switch (code)
     {
@@ -2552,7 +2503,7 @@ bool IsValidSender(string sender)
     {
         return true;
     }
-    
+
     int code = (allowedSenderId[0] == '*' ? 1 : 0) + (allowedSenderId[allowedSenderId.Length - 1] == '*' ? 2 : 0);
     switch (code)
     {
@@ -2574,7 +2525,7 @@ string NextToken(string line, ref int start, char delim)
         int end = line.IndexOf(delim, start);
         if (end > -1)
         {
-            string result = line.Substring(start, end - start);    
+            string result = line.Substring(start, end - start);
             start = end + 1;
             return result;
         }
@@ -2698,7 +2649,7 @@ void ProcessSingleMissileCommand(string[] tokens)
             {
                 timestamp = DateTime.Now.Ticks;
             }
-            
+
             BoundingBoxD boundingBox = new BoundingBoxD(boxMin, position + position - boxMin);
 
             commsLidarTarget = new MyDetectedEntityInfo(entityId, (tokens.Length >= 27 ? tokens[26] : ""), targetType, hitPosition, orientation, velocity, targetRelationship, boundingBox, timestamp);
@@ -2712,7 +2663,7 @@ void ProcessSingleMissileCommand(string[] tokens)
     else if (cmdToken.Equals("ABORT"))
     {
         gyroControl.ZeroTurnGyro();
-        
+
         Runtime.UpdateFrequency = UpdateFrequency.None;
         mode = 99;
     }
@@ -2743,8 +2694,11 @@ void ProcessSingleMissileCommand(string[] tokens)
         {
             gyroControl.SetGyroRoll(spinAmount);
         }
-                
+
         lastTargetPosition = targetPosition = GetFlyStraightVector();
+
+        targetDirection = targetAcceleration = Vector3D.Zero;
+        targetSpeed = 0;
 
         subCounter = 0;
         subMode = 0;
@@ -2757,7 +2711,7 @@ void ProcessSingleMissileCommand(string[] tokens)
             FireThrusters(launchThrusters, false);
             FireThrusters(fwdThrusters, true);
         }
-        
+
         gyroControl.ResetGyro();
         gyroControl.SetGyroOverride(true);
 
@@ -2765,7 +2719,7 @@ void ProcessSingleMissileCommand(string[] tokens)
         {
             gyroControl.SetGyroRoll(spinAmount);
         }
-        
+
         if (mode == -1)
         {
             refFwdPosition = midPoint;
@@ -2801,6 +2755,9 @@ void ProcessSingleMissileCommand(string[] tokens)
             refFwdVector = Vector3D.Normalize(targetPosition - midPoint);
             refFwdSet = true;
         }
+
+        targetDirection = targetAcceleration = Vector3D.Zero;
+        targetSpeed = 0;
 
         subCounter = 0;
         subMode = 0;
@@ -2919,7 +2876,7 @@ void ExecuteTriggerCommand(string commandLine)
                 int type;
                 double value = 0;
                 bool parsed = (tokens.Length >= 3 ? double.TryParse(tokens[1], out value) : false);
-                
+
                 switch (cmdToken[2])
                 {
                     case 'R':
@@ -2969,7 +2926,7 @@ void ExecuteTriggerCommand(string commandLine)
                                 timeTriggerList.Add(new KeyValuePair<int, string[]>((int)value, items));
                                 break;
                         }
-                    
+
                         haveTriggerCommands = true;
                     }
                 }
@@ -2995,7 +2952,7 @@ void CheckMissile()
     InitMissileLidars();
     InitGyroControl();
     InitThrusters();
-    
+
     Echo("\n----- Missile Parameters -----");
 
     Echo("\n[Compatible Homing Modes]:");
@@ -3004,7 +2961,7 @@ void CheckMissile()
     Echo("\nVertical Takeoff: " + (verticalTakeoff == true ? "Yes" : "No"));
     Echo("\nProximity Sensors: " + (proximitySensors != null ? "Yes" : "No"));
     Echo("\n<<Below lists the Detected Blocks.\nSet to Show On HUD for checking>>");
-    
+
     Echo("\nOne of the Forward Thrusters:");
     if (fwdThrusters.Count > 0)
     {
@@ -3026,7 +2983,7 @@ void CheckMissile()
     {
         Echo("<NONE>");
     }
-    
+
     if (fwdThrusters.Count > 0)
     {
         bool haveFwdLidars = false;
@@ -3052,7 +3009,7 @@ void CheckLaunchingShip()
     Echo("----- Launching Ship Warnings -----\n");
 
     InitLaunchingShipRefBlocks();
-                    
+
     Echo("\n----- Launching Ship Parameters -----");
 
     Echo("\n<<Below lists the Detected Blocks.\nSet to Show On HUD for checking>>");
@@ -3067,7 +3024,7 @@ void CheckLaunchingShip()
     {
         Echo("<NONE>");
     }
-    
+
     Echo("\nOne of the R_LIDAR Cameras:");
     if (shipRefLidars.Count > 0)
     {
@@ -3078,7 +3035,7 @@ void CheckLaunchingShip()
     {
         Echo("<NONE>");
     }
-    
+
     Echo("\nR_TARGET GPS Text Panel:");
     if (shipRefPanel != null)
     {
@@ -3089,7 +3046,7 @@ void CheckLaunchingShip()
     {
         Echo("<NONE>");
     }
-    
+
     Echo("\nLock-On Alert Sound Block:");
     if (alertBlock != null)
     {
@@ -3137,7 +3094,7 @@ bool InitLaunchingShipRefBlocks()
 
     shipRefPanel = null;
     shipRefLidars = new List<IMyCameraBlock>();
-    
+
     if (missileLaunchType == 5)
     {
         shipRefTurrets = new List<IMyLargeTurretBase>();
@@ -3166,7 +3123,7 @@ bool InitLaunchingShipRefBlocks()
                 }
             }
         }
-        
+
         if (NameContains(block, strShipRefFwd))
         {
             if (shipRefFwd == null)
@@ -3197,7 +3154,7 @@ bool InitLaunchingShipRefBlocks()
             }
         }
     }
-    
+
     if (shipRefLidars.Count == 0)
     {
         Echo("Warning: Missing Camera Lidars with tag " + strShipRefLidar);
@@ -3210,7 +3167,7 @@ bool InitLaunchingShipRefBlocks()
             camera.EnableRaycast = true;
         }
     }
-    
+
     if (shipRefPanel == null)
     {
         Echo("Warning: Missing Text Panel with tag " + strShipRefPanel);
@@ -3221,7 +3178,7 @@ bool InitLaunchingShipRefBlocks()
     {
         Echo("Warning: Multiple Text Panel with tag " + strShipRefPanel + " found. Using first panel - " + shipRefPanel.CustomName);
     }
-    
+
     if (shipRefFwd == null)
     {
         IMyCockpit cockpit = null;
@@ -3251,9 +3208,9 @@ bool InitLaunchingShipRefBlocks()
     {
         Echo("Warning: Multiple Forward Block with tag " + strShipRefFwd + " found. Using first block - " + shipRefFwd.CustomName);
     }
-    
+
     fwdIsTurret = ((shipRefFwd as IMyLargeTurretBase) != null);
-    
+
     return true;
 }
 
@@ -3268,7 +3225,7 @@ void InitMissileBlocks()
 {
     List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
     GridTerminalSystem.GetBlocks(blocks);
-    
+
     List<IMyGyro> gyros = new List<IMyGyro>();
 
     missileLidars = new List<IMyCameraBlock>();
@@ -3277,10 +3234,10 @@ void InitMissileBlocks()
     refFwdBlock = null;
     homingTurret = null;
     statusDisplay = null;
-    
+
     isFixedDirection = IsNotEmpty(strDirectionRefBlockTag);
     bool needStatusBlock = IsNotEmpty(strStatusDisplayPrefix);
-    
+
     thrustGroup = new List<IMyThrust>[6];
     thrustTotal = new float[6];
     bool haveThruster = false;
@@ -3301,7 +3258,7 @@ void InitMissileBlocks()
                 if (strThrustersTag == null || strThrustersTag.Length == 0 || NameContains(block, strThrustersTag))
                 {
                     IMyThrust thruster = block as IMyThrust;
-                    
+
                     int index = (int)thruster.Orientation.Forward;
                     if (thrustGroup[index] == null)
                     {
@@ -3351,20 +3308,20 @@ void InitMissileBlocks()
             }
         }
     }
-    
+
     if (gyros.Count == 0) Echo("Error: Missing Gyroscopes.");
     if (!haveThruster) Echo("Warning: Missing Thrusters.");
     if (remoteControl == null) Echo("Error: Missing Remote Control.");
-    
+
     gyroControl = new GyroControl(gyros);
-    
+
     if (spinAmount > 0)
     {
         boolNaturalDampener = false;
     }
-    
+
     isFixedDirection = (refFwdBlock != null);
-    
+
     if (refFwdBlock == null)
     {
         refFwdBlock = ComputeHighestThrustReference();
@@ -3378,7 +3335,7 @@ void InitMissileBlocks()
         refFwdBlock = (remoteControl == null ? Me : (IMyTerminalBlock)remoteControl);
         refFwdReverse = false;
     }
-    
+
     refWorldMatrix = refFwdBlock.WorldMatrix;
     if (refFwdReverse)
     {
@@ -3390,7 +3347,7 @@ void InitMissileBlocks()
 void InitGyroControl()
 {
     gyroControl?.Init(ref refWorldMatrix);
-    
+
     InitPIDControllers();
 }
 
@@ -3477,7 +3434,7 @@ void InitMissileLidars()
     if (missileLidars.Count > 0 || shipRefLidars.Count > 0)
     {
         IMyCameraBlock lidar = (missileLidars.Count > 0 ? missileLidars[0] : shipRefLidars[0]);
-        
+
         ticksRatio = lidar.TimeUntilScan(lidar.AvailableScanRange + 1000) * 0.00006;
         ticksFactor = ticksRatio / Math.Max((int)Math.Floor(missileLidars.Count * LIDAR_REFRESH_CALC_FACTOR), 1);
     }
@@ -3517,13 +3474,13 @@ void InitPIDControllers()
 void InitThrusters()
 {
     //---------- Find Forward Thrusters ----------
-    
+
     if (!isFixedDirection || verticalTakeoff)
     {
         float highestThrust = 0;
         int highestSide = -1;
         int up = -1;
-        
+
         for (int i = 0; i < 6; i++)
         {
             if (thrustGroup[i] != null)
@@ -3561,7 +3518,7 @@ void InitThrusters()
                 }
             }
         }
-        
+
         if (highestThrust == 0)
         {
             if (boolNaturalDampener)
@@ -3732,7 +3689,7 @@ List<IMyTerminalBlock> GetBlocksWithName<T>(string name, int matchType = 0) wher
                 continue;
             }
         }
-        
+
         IMyTerminalBlock block = blocks[i] as T;
         if (block != null)
         {
@@ -3770,7 +3727,7 @@ public class GyroControl
         gyroYaw = new byte[gyros.Count];
         gyroPitch = new byte[gyros.Count];
         gyroRoll = new byte[gyros.Count];
-        
+
         for (int i = 0; i < gyros.Count; i++)
         {
             gyroYaw[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Up));
@@ -3866,7 +3823,7 @@ public class PIDController
 {
     double integral;
     double lastInput;
-    
+
     double gain_p;
     double gain_i;
     double gain_d;
@@ -3887,7 +3844,7 @@ public class PIDController
     public double Filter(double input, int round_d_digits)
     {
         double roundedInput = Math.Round(input, round_d_digits);
-        
+
         integral = integral + (input / second);
         integral = (upperLimit_i > 0 && integral > upperLimit_i ? upperLimit_i : integral);
         integral = (lowerLimit_i < 0 && integral < lowerLimit_i ? lowerLimit_i : integral);
@@ -3923,6 +3880,126 @@ public class ProximitySensor
     public ProximitySensor(IMyCameraBlock inputLidar)
     {
         lidar = inputLidar;
+    }
+}
+
+public class Solver
+{
+    public static double Solve(double a, double b, double c, double d, double e)
+    {
+	    if (Math.Abs(a) < 0.1) a = (a == 0 ? 0.1 : Math.Sign(a) * 0.1);
+
+	    double A = (-(3 * b * b) / (8 * a * a)) + (c / a);
+	    double B = ((b * b * b) / (8 * a * a * a)) - ((b * c) / (2 * a * a)) + (d / a);
+	    double C = (-(3 * b * b * b * b) / (256 * a * a * a * a)) + ((c * b * b) / (16 * a * a * a)) - ((b * d) / (4 * a * a)) + (e / a);
+
+	    double P = (-(A * A) / 12) - C;
+	    double Q = (-(A * A * A) / 108) + ((A * C) / 3) - ((B * B) / 8);
+
+	    CX R = (-Q / 2) + CX.Sqrt(((Q * Q) / 4) + ((P * P * P) / 27));
+	    CX U = CX.Pow(R, 1.0 / 3.0);
+
+	    CX y = (-(5 / 6) * A) + U - (CX.Abs(U) < 0.00001 ? CX.Pow(Q, 1.0 / 3.0) : P / (3 * U));
+
+	    CX W = CX.Sqrt(A + 2 * y);
+	    double X = -b / (4 * a);
+	    CX Y = (3 * A) + (2 * y);
+	    CX Z = (2 * B) / W;
+
+	    CX t1 = (X + (W + CX.Sqrt(-(Y + Z))) * 0.5);
+	    CX t2 = (X + (W - CX.Sqrt(-(Y + Z))) * 0.5);
+	    CX t3 = (X + (-W + CX.Sqrt(-(Y - Z))) * 0.5);
+	    CX t4 = (X + (-W - CX.Sqrt(-(Y - Z))) * 0.5);
+
+	    return Math.Min(TryGetReal(ref t1), Math.Min(TryGetReal(ref t2), Math.Min(TryGetReal(ref t3), TryGetReal(ref t4))));
+    }
+
+    static double TryGetReal(ref CX t)
+    {
+        return (!double.IsNaN(t.R) && t.R > 0 ? t.R : double.MaxValue);
+    }
+
+    struct CX
+    {
+        private double m_r;
+        private double m_i;
+        public double R { get { return m_r; } }
+        public double I { get { return m_i; } }
+        public double M { get { return CX.Abs(this); } }
+        public double P { get { return Math.Atan2(m_i, m_r); } }
+        public static readonly CX Zero = new CX(0.0, 0.0);
+        public static readonly CX One = new CX(1.0, 0.0);
+        public static readonly CX IOne = new CX(0.0, 1.0);
+        public CX(double r, double i)
+        {
+            m_r = r;
+            m_i = i;
+        }
+        public static CX FPC(double mag, double ph) { return new CX(mag * Math.Cos(ph), mag * Math.Sin(ph)); }
+        public static CX operator -(CX value) { return new CX(-value.m_r, -value.m_i); }
+        public static CX operator +(CX l, CX r) { return new CX(l.m_r + r.m_r, l.m_i + r.m_i); }
+        public static CX operator -(CX l, CX r) { return new CX(l.m_r - r.m_r, l.m_i - r.m_i); }
+        public static CX operator *(CX l, CX r) { return new CX((l.m_r * r.m_r) - (l.m_i * r.m_i), (l.m_i * r.m_r) + (l.m_r * r.m_i)); }
+        public static CX operator /(CX l, CX r)
+        {
+            double a = l.m_r;
+            double b = l.m_i;
+            double c = r.m_r;
+            double d = r.m_i;
+            if (Math.Abs(d) < Math.Abs(c))
+            {
+                double dc = d / c;
+                return new CX((a + b * dc) / (c + d * dc), (b - a * dc) / (c + d * dc));
+            }
+            else
+            {
+                double cd = c / d;
+                return new CX((b + a * cd) / (d + c * cd), (-a + b * cd) / (d + c * cd));
+            }
+        }
+        public static double Abs(CX value)
+        {
+            if (double.IsInfinity(value.m_r) || double.IsInfinity(value.m_i)) return double.PositiveInfinity;
+
+            double c = Math.Abs(value.m_r);
+            double d = Math.Abs(value.m_i);
+            if (c > d)
+            {
+                double r = d / c;
+                return c * Math.Sqrt(1.0 + r * r);
+            }
+            else if (d == 0.0)
+            {
+                return c;
+            }
+            else
+            {
+                double r = c / d;
+                return d * Math.Sqrt(1.0 + r * r);
+            }
+        }
+        public override bool Equals(object obj)
+        {
+            if (!(obj is CX)) return false;
+            return this == (CX)obj;
+        }
+        public bool Equals(CX value) { return m_r.Equals(value.m_r) && m_i.Equals(value.m_i); }
+        public override int GetHashCode() { return (m_r.GetHashCode() % 99999997) ^ m_i.GetHashCode(); }
+        public static bool operator ==(CX left, CX right) { return (left.m_r == right.m_r) && (left.m_i == right.m_i); }
+        public static bool operator !=(CX left, CX right) { return (left.m_r != right.m_r) || (left.m_i != right.m_i); }
+        public static implicit operator CX(double value) { return new CX(value, 0.0); }
+        public static CX Sqrt(CX value) { return CX.FPC(Math.Sqrt(value.M), value.P * 0.5); }
+        public static CX Pow(CX v, CX p)
+        {
+            if (p == Zero || v == Zero) return Zero;
+
+            double rh = Abs(v);
+            double th = Math.Atan2(v.m_i, v.m_r);
+            double nRh = p.m_r * th + p.m_i * Math.Log(rh);
+            double t = Math.Pow(rh, p.m_r) * Math.Pow(Math.E, -p.m_i * th);
+
+            return new CX(t * Math.Cos(nRh), t * Math.Sin(nRh));
+        }
     }
 }
 
