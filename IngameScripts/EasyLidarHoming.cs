@@ -3889,29 +3889,29 @@ public class Solver
     {
 	    if (Math.Abs(a) < 0.1) a = (a == 0 ? 0.1 : Math.Sign(a) * 0.1);
 
-	    double A = (-(3 * b * b) / (8 * a * a)) + (c / a);
-	    double B = ((b * b * b) / (8 * a * a * a)) - ((b * c) / (2 * a * a)) + (d / a);
-	    double C = (-(3 * b * b * b * b) / (256 * a * a * a * a)) + ((c * b * b) / (16 * a * a * a)) - ((b * d) / (4 * a * a)) + (e / a);
+        double A = -(3 * b * b) / (8 * a * a) + c / a;
+        double B = (b * b * b) / (8 * a * a * a) - (b * c) / (2 * a * a) + d / a;
+        double C = -(3 * b * b * b * b) / (256 * a * a * a * a) + (c * b * b) / (16 * a * a * a) - (b * d) / (4 * a * a) + (e / a);
 
-	    double P = (-(A * A) / 12) - C;
-	    double Q = (-(A * A * A) / 108) + ((A * C) / 3) - ((B * B) / 8);
+        double P = -(A * A) / 12 - C;
+        double Q = -(A * A * A) / 108 + (A * C) / 3 - (B * B) / 8;
 
-	    CX R = (-Q / 2) + CX.Sqrt(((Q * Q) / 4) + ((P * P * P) / 27));
-	    CX U = CX.Pow(R, 1.0 / 3.0);
+        CX R = (-Q / 2) + CX.Sqrt((Q * Q) / 4 + (P * P * P) / 27);
+        CX U = CX.Pow(R, 1.0f / 3.0f);
 
-	    CX y = (-(5 / 6) * A) + U - (CX.Abs(U) < 0.00001 ? CX.Pow(Q, 1.0 / 3.0) : P / (3 * U));
+        CX y = -(5f / 6f) * A + U - (CX.Abs(U) < 0.00001f ? CX.Pow(Q, 1.0f / 3.0f) : P / (3 * U));
 
-	    CX W = CX.Sqrt(A + 2 * y);
-	    double X = -b / (4 * a);
-	    CX Y = (3 * A) + (2 * y);
-	    CX Z = (2 * B) / W;
+        CX W = CX.Sqrt(A + 2 * y);
+        double X = -b / (4 * a);
+        CX Y = 3 * A + 2 * y;
+        CX Z = (2 * B) / W;
 
-	    CX t1 = (X + (W + CX.Sqrt(-(Y + Z))) * 0.5);
-	    CX t2 = (X + (W - CX.Sqrt(-(Y + Z))) * 0.5);
-	    CX t3 = (X + (-W + CX.Sqrt(-(Y - Z))) * 0.5);
-	    CX t4 = (X + (-W - CX.Sqrt(-(Y - Z))) * 0.5);
+        CX t1 = (X + (W + CX.Sqrt(-(Y + Z))) / 2);
+        CX t2 = (X + (W - CX.Sqrt(-(Y + Z))) / 2);
+        CX t3 = (X + (-W + CX.Sqrt(-(Y - Z))) / 2);
+        CX t4 = (X + (-W - CX.Sqrt(-(Y - Z))) / 2);
 
-	    return Math.Min(TryGetReal(ref t1), Math.Min(TryGetReal(ref t2), Math.Min(TryGetReal(ref t3), TryGetReal(ref t4))));
+        return Math.Min(TryGetReal(ref t1), Math.Min(TryGetReal(ref t2), Math.Min(TryGetReal(ref t3), TryGetReal(ref t4))));
     }
 
     static double TryGetReal(ref CX t)
