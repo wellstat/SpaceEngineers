@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v21.0
+// ADN - Easy Lidar Homing Script v22.0
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -1285,7 +1285,7 @@ void CalculateNavigationParameters()
     double d = 2 * rangeVector.Dot(velocityVector);
     double e = rangeVector.Dot(rangeVector);
 
-    double t = Solver.Solve(a, b, c, d, e);
+    double t = FastSolver.Solve(a, b, c, d, e);
     if (t == double.MaxValue) t = 1000;
 
     distToTarget = rangeVector.Length();
@@ -3712,6 +3712,8 @@ public class GyroControl
     byte[] gyroPitch;
     byte[] gyroRoll;
 
+    int activeGyro = 0;
+
     public GyroControl(List<IMyGyro> newGyros)
     {
         gyros = newGyros;
@@ -3734,6 +3736,8 @@ public class GyroControl
             gyroPitch[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Left));
             gyroRoll[i] = SetRelativeDirection(gyros[i].WorldMatrix.GetClosestDirection(refWorldMatrix.Forward));
         }
+
+        activeGyro = 0;
     }
 
     public byte SetRelativeDirection(Base6Directions.Direction dir)
@@ -3766,36 +3770,41 @@ public class GyroControl
 
     public void SetGyroOverride(bool bOverride)
     {
-        foreach (IMyGyro gyro in gyros)
+        CheckGyro();
+
+        for (int i = 0; i < gyros.Count; i++)
         {
-            gyro.GyroOverride = bOverride;
+            if (i == activeGyro) gyros[i].GyroOverride = bOverride;
+            else gyros[i].GyroOverride = false;
         }
     }
 
     public void SetGyroYaw(float yawRate)
     {
-        for (int i = 0; i < gyros.Count; i++)
+        CheckGyro();
+
+        if (activeGyro < gyros.Count)
         {
-            byte index = gyroYaw[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
+            byte index = gyroYaw[activeGyro];
+            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
     public void SetGyroPitch(float pitchRate)
     {
-        for (int i = 0; i < gyros.Count; i++)
+        if (activeGyro < gyros.Count)
         {
-            byte index = gyroPitch[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
+            byte index = gyroPitch[activeGyro];
+            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
     public void SetGyroRoll(float rollRate)
     {
-        for (int i = 0; i < gyros.Count; i++)
+        if (activeGyro < gyros.Count)
         {
-            byte index = gyroRoll[i];
-            gyros[i].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
+            byte index = gyroRoll[activeGyro];
+            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
         }
     }
 
@@ -3815,6 +3824,27 @@ public class GyroControl
             gyro.SetValue("Yaw", 0f);
             gyro.SetValue("Pitch", 0f);
             gyro.SetValue("Roll", 0f);
+        }
+    }
+
+    private void CheckGyro()
+    {
+        while (activeGyro < gyros.Count)
+        {
+            if (gyros[activeGyro].IsFunctional)
+            {
+                break;
+            }
+            else
+            {
+                gyros[activeGyro].Enabled = false;
+                gyros[activeGyro].GyroOverride = false;
+                gyros[activeGyro].Yaw = 0f;
+                gyros[activeGyro].Pitch = 0f;
+                gyros[activeGyro].Roll = 0f;
+
+                activeGyro++;
+            }
         }
     }
 }
@@ -3883,123 +3913,152 @@ public class ProximitySensor
     }
 }
 
-public class Solver
+public class FastSolver
 {
+    public static double epsilon = 0.000001;
+    public static double root3 = Math.Sqrt(3.0);
+    public static double inv3 = 1.0 / 3.0;
+    public static double inv9 = 1.0 / 9.0;
+    public static double inv54 = 1.0 / 54.0;
+
+    //Shortcut Ignoring Of Complex Values And Return Smallest Real Number
     public static double Solve(double a, double b, double c, double d, double e)
     {
-	    if (Math.Abs(a) < 0.1) a = (a == 0 ? 0.1 : Math.Sign(a) * 0.1);
+        if (Math.Abs(a) < epsilon) a = (a >= 0 ? epsilon : -epsilon);
+        double inva = 1 / a;
 
-        double A = -(3 * b * b) / (8 * a * a) + c / a;
-        double B = (b * b * b) / (8 * a * a * a) - (b * c) / (2 * a * a) + d / a;
-        double C = -(3 * b * b * b * b) / (256 * a * a * a * a) + (c * b * b) / (16 * a * a * a) - (b * d) / (4 * a * a) + (e / a);
+        b *= inva;
+        c *= inva;
+        d *= inva;
+        e *= inva;
 
-        double P = -(A * A) / 12 - C;
-        double Q = -(A * A * A) / 108 + (A * C) / 3 - (B * B) / 8;
+        double a3 = -c;
+        double b3 =  b * d - 4 * e;
+        double c3 = -b * b * e - d * d + 4 * c * e;
 
-        CX R = (-Q / 2) + CX.Sqrt((Q * Q) / 4 + (P * P * P) / 27);
-        CX U = CX.Pow(R, 1.0f / 3.0f);
-
-        CX y = -(5f / 6f) * A + U - (CX.Abs(U) < 0.00001f ? CX.Pow(Q, 1.0f / 3.0f) : P / (3 * U));
-
-        CX W = CX.Sqrt(A + 2 * y);
-        double X = -b / (4 * a);
-        CX Y = 3 * A + 2 * y;
-        CX Z = (2 * B) / W;
-
-        CX t1 = (X + (W + CX.Sqrt(-(Y + Z))) / 2);
-        CX t2 = (X + (W - CX.Sqrt(-(Y + Z))) / 2);
-        CX t3 = (X + (-W + CX.Sqrt(-(Y - Z))) / 2);
-        CX t4 = (X + (-W - CX.Sqrt(-(Y - Z))) / 2);
-
-        return Math.Min(TryGetReal(ref t1), Math.Min(TryGetReal(ref t2), Math.Min(TryGetReal(ref t3), TryGetReal(ref t4))));
-    }
-
-    static double TryGetReal(ref CX t)
-    {
-        return (!double.IsNaN(t.R) && t.R > 0 ? t.R : double.MaxValue);
-    }
-
-    struct CX
-    {
-        private double m_r;
-        private double m_i;
-        public double R { get { return m_r; } }
-        public double I { get { return m_i; } }
-        public double M { get { return CX.Abs(this); } }
-        public double P { get { return Math.Atan2(m_i, m_r); } }
-        public static readonly CX Zero = new CX(0.0, 0.0);
-        public static readonly CX One = new CX(1.0, 0.0);
-        public static readonly CX IOne = new CX(0.0, 1.0);
-        public CX(double r, double i)
+        double[] result;
+        bool chooseMaximal = SolveCubic(a3, b3, c3, out result);
+        double y = result[0];
+        if (chooseMaximal)
         {
-            m_r = r;
-            m_i = i;
+            if (Math.Abs(result[1]) > Math.Abs(y)) y = result[1];
+            if (Math.Abs(result[2]) > Math.Abs(y)) y = result[2];
         }
-        public static CX FPC(double mag, double ph) { return new CX(mag * Math.Cos(ph), mag * Math.Sin(ph)); }
-        public static CX operator -(CX value) { return new CX(-value.m_r, -value.m_i); }
-        public static CX operator +(CX l, CX r) { return new CX(l.m_r + r.m_r, l.m_i + r.m_i); }
-        public static CX operator -(CX l, CX r) { return new CX(l.m_r - r.m_r, l.m_i - r.m_i); }
-        public static CX operator *(CX l, CX r) { return new CX((l.m_r * r.m_r) - (l.m_i * r.m_i), (l.m_i * r.m_r) + (l.m_r * r.m_i)); }
-        public static CX operator /(CX l, CX r)
+
+        double q1, q2, p1, p2, squ;
+
+        double u = y * y - 4 * e;
+        if (Math.Abs(u) < epsilon)
         {
-            double a = l.m_r;
-            double b = l.m_i;
-            double c = r.m_r;
-            double d = r.m_i;
-            if (Math.Abs(d) < Math.Abs(c))
+            q1 = q2 = y * 0.5;
+            u = b * b - 4 * (c - y);
+
+            if (Math.Abs(u) < epsilon)
             {
-                double dc = d / c;
-                return new CX((a + b * dc) / (c + d * dc), (b - a * dc) / (c + d * dc));
+                p1 = p2 = b * 0.5;
             }
             else
             {
-                double cd = c / d;
-                return new CX((b + a * cd) / (d + c * cd), (-a + b * cd) / (d + c * cd));
+                squ = Math.Sqrt(u);
+                p1 = (b + squ) * 0.5;
+                p2 = (b - squ) * 0.5;
             }
         }
-        public static double Abs(CX value)
+        else
         {
-            if (double.IsInfinity(value.m_r) || double.IsInfinity(value.m_i)) return double.PositiveInfinity;
+            squ = Math.Sqrt(u);
+            q1 = (y + squ) * 0.5;
+            q2 = (y - squ) * 0.5;
 
-            double c = Math.Abs(value.m_r);
-            double d = Math.Abs(value.m_i);
-            if (c > d)
-            {
-                double r = d / c;
-                return c * Math.Sqrt(1.0 + r * r);
-            }
-            else if (d == 0.0)
-            {
-                return c;
-            }
-            else
-            {
-                double r = c / d;
-                return d * Math.Sqrt(1.0 + r * r);
-            }
+            double dm = 1 / (q1 - q2);
+            p1 = (b * q1 - d) * dm;
+            p2 = (d - b * q2) * dm;
         }
-        public override bool Equals(object obj)
+
+        double v1, v2;
+
+        u = p1 * p1 - 4 * q1;
+        if (u < 0)
         {
-            if (!(obj is CX)) return false;
-            return this == (CX)obj;
+            v1 = double.MaxValue;
         }
-        public bool Equals(CX value) { return m_r.Equals(value.m_r) && m_i.Equals(value.m_i); }
-        public override int GetHashCode() { return (m_r.GetHashCode() % 99999997) ^ m_i.GetHashCode(); }
-        public static bool operator ==(CX left, CX right) { return (left.m_r == right.m_r) && (left.m_i == right.m_i); }
-        public static bool operator !=(CX left, CX right) { return (left.m_r != right.m_r) || (left.m_i != right.m_i); }
-        public static implicit operator CX(double value) { return new CX(value, 0.0); }
-        public static CX Sqrt(CX value) { return CX.FPC(Math.Sqrt(value.M), value.P * 0.5); }
-        public static CX Pow(CX v, CX p)
+        else
         {
-            if (p == Zero || v == Zero) return Zero;
-
-            double rh = Abs(v);
-            double th = Math.Atan2(v.m_i, v.m_r);
-            double nRh = p.m_r * th + p.m_i * Math.Log(rh);
-            double t = Math.Pow(rh, p.m_r) * Math.Pow(Math.E, -p.m_i * th);
-
-            return new CX(t * Math.Cos(nRh), t * Math.Sin(nRh));
+            squ = Math.Sqrt(u);
+            v1 = MinPosNZ(-p1 + squ, -p1 - squ) * 0.5;
         }
+
+        u = p2 * p2 - 4 * q2;
+        if (u < 0)
+        {
+            v2 = double.MaxValue;
+        }
+        else
+        {
+            squ = Math.Sqrt(u);
+            v2 = MinPosNZ(-p2 + squ, -p2 - squ) * 0.5;
+        }
+
+        return MinPosNZ(v1, v2);
+    }
+
+    private static bool SolveCubic(double a, double b, double c, out double[] result)
+    {
+        result = new double[4];
+
+	    double a2 = a * a;
+    	double q  = (a2 - 3 * b) * inv9;
+	    double r  = (a * (2 * a2 - 9 * b) + 27 * c) * inv54;
+        double r2 = r * r;
+	    double q3 = q * q * q;
+
+        if (r2 < q3)
+        {
+            double t = r / Math.Sqrt(q3);
+            if (t < -1) t = -1;
+            else if (t > 1) t = 1;
+
+            t = Math.Acos(t);
+
+            a *= inv3;
+            q = -2 * Math.Sqrt(q);
+
+            result[0] = q * Math.Cos(t * inv3) - a;
+            result[1] = q * Math.Cos((t + MathHelperD.TwoPi) * inv3) - a;
+            result[2] = q * Math.Cos((t - MathHelperD.TwoPi) * inv3) - a;
+
+            return true;
+        }
+        else
+        {
+            double g = -Math.Pow(Math.Abs(r) + Math.Sqrt(r2 - q3), inv3);
+            if (r < 0) g = -g;
+
+            double h = (g == 0 ? 0 : q / g);
+
+            a *= inv3;
+
+            result[0] = (g + h) - a;
+            result[1] = -0.5 * (g + h) - a;
+            result[2] = 0.5 * root3 * (g - h);
+
+            if (Math.Abs(result[2]) < epsilon)
+            {
+                result[2] = result[1];
+                return true;
+            }
+		    else
+            {
+                return false;
+            }
+        }
+    }
+
+    private static double MinPosNZ(double a, double b)
+    {
+        if (a <= 0) return (b > 0 ? b : double.MaxValue);
+        else if (b <= 0) return a;
+        else return Math.Min(a, b);
     }
 }
 
