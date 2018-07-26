@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v22.1
+// ADN - Easy Lidar Homing Script v23.0
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -3704,7 +3704,14 @@ List<IMyTerminalBlock> GetBlocksWithName<T>(string name, int matchType = 0) wher
 
 public class GyroControl
 {
-    string[] profiles = {"Yaw","Yaw","Pitch","Pitch","Roll","Roll"};
+    static Action<IMyGyro, float> PosYaw = (g, v) => { g.Yaw = v; };
+    static Action<IMyGyro, float> NegYaw = (g, v) => { g.Yaw = -v; };
+    static Action<IMyGyro, float> PosPitch = (g, v) => { g.Pitch = v; };
+    static Action<IMyGyro, float> NegPitch = (g, v) => { g.Pitch = -v; };
+    static Action<IMyGyro, float> PosRoll = (g, v) => { g.Roll = v; };
+    static Action<IMyGyro, float> NegRoll = (g, v) => { g.Roll = -v; };
+
+    Action<IMyGyro, float>[] profiles = {PosYaw,NegYaw,PosPitch,NegPitch,PosRoll,NegRoll};
 
     List<IMyGyro> gyros;
 
@@ -3785,8 +3792,7 @@ public class GyroControl
 
         if (activeGyro < gyros.Count)
         {
-            byte index = gyroYaw[activeGyro];
-            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? yawRate : -yawRate) * MathHelper.RadiansPerSecondToRPM);
+            profiles[gyroYaw[activeGyro]](gyros[activeGyro], yawRate);
         }
     }
 
@@ -3794,8 +3800,7 @@ public class GyroControl
     {
         if (activeGyro < gyros.Count)
         {
-            byte index = gyroPitch[activeGyro];
-            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? pitchRate : -pitchRate) * MathHelper.RadiansPerSecondToRPM);
+            profiles[gyroPitch[activeGyro]](gyros[activeGyro], pitchRate);
         }
     }
 
@@ -3803,8 +3808,7 @@ public class GyroControl
     {
         if (activeGyro < gyros.Count)
         {
-            byte index = gyroRoll[activeGyro];
-            gyros[activeGyro].SetValue(profiles[index], (index % 2 == 0 ? rollRate : -rollRate) * MathHelper.RadiansPerSecondToRPM);
+            profiles[gyroRoll[activeGyro]](gyros[activeGyro], rollRate);
         }
     }
 
@@ -3812,8 +3816,8 @@ public class GyroControl
     {
         for (int i = 0; i < gyros.Count; i++)
         {
-            gyros[i].SetValue(profiles[gyroYaw[i]], 0f);
-            gyros[i].SetValue(profiles[gyroPitch[i]], 0f);
+            profiles[gyroYaw[i]](gyros[i], 0f);
+            profiles[gyroPitch[i]](gyros[i], 0f);
         }
     }
 
@@ -3821,9 +3825,7 @@ public class GyroControl
     {
         foreach (IMyGyro gyro in gyros)
         {
-            gyro.SetValue("Yaw", 0f);
-            gyro.SetValue("Pitch", 0f);
-            gyro.SetValue("Roll", 0f);
+            gyro.Yaw = gyro.Pitch = gyro.Roll = 0f;
         }
     }
 
@@ -3837,11 +3839,10 @@ public class GyroControl
             }
             else
             {
-                gyros[activeGyro].Enabled = false;
-                gyros[activeGyro].GyroOverride = false;
-                gyros[activeGyro].Yaw = 0f;
-                gyros[activeGyro].Pitch = 0f;
-                gyros[activeGyro].Roll = 0f;
+                IMyGyro gyro = gyros[activeGyro];
+
+                gyro.Enabled = gyro.GyroOverride = false;
+                gyro.Yaw = gyro.Pitch = gyro.Roll = 0f;
 
                 activeGyro++;
             }
