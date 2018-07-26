@@ -3760,9 +3760,9 @@ public class GyroControl
             case Base6Directions.Direction.Right:
                 return 3;
             case Base6Directions.Direction.Forward:
-                return 5;
-            case Base6Directions.Direction.Backward:
                 return 4;
+            case Base6Directions.Direction.Backward:
+                return 5;
         }
         return 0;
     }
