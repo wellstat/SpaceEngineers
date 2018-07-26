@@ -3,7 +3,7 @@
 //============================================================
 
 //------------------------------------------------------------
-// ADN - Easy Lidar Homing Script v22.0
+// ADN - Easy Lidar Homing Script v22.1
 //------------------------------------------------------------
 
 //----- Refer To Steam Workshop Discussion Section For Variables Definition -----
@@ -3915,11 +3915,15 @@ public class ProximitySensor
 
 public class FastSolver
 {
-    public static double epsilon = 0.000001;
-    public static double root3 = Math.Sqrt(3.0);
-    public static double inv3 = 1.0 / 3.0;
-    public static double inv9 = 1.0 / 9.0;
-    public static double inv54 = 1.0 / 54.0;
+    public static readonly double epsilon = 0.000001;
+
+    public static readonly double cos120d = -0.5;
+    public static readonly double sin120d = Math.Sin(Math.PI / 3.0);
+    public static readonly double root3 = Math.Sqrt(3.0);
+
+    public static readonly double inv3 = 1.0 / 3.0;
+    public static readonly double inv9 = 1.0 / 9.0;
+    public static readonly double inv54 = 1.0 / 54.0;
 
     //Shortcut Ignoring Of Complex Values And Return Smallest Real Number
     public static double Solve(double a, double b, double c, double d, double e)
@@ -4007,25 +4011,30 @@ public class FastSolver
         result = new double[4];
 
 	    double a2 = a * a;
-    	double q  = (a2 - 3 * b) * inv9;
-	    double r  = (a * (2 * a2 - 9 * b) + 27 * c) * inv54;
+    	double q = (a2 - 3 * b) * inv9;
+	    double r = (a * (2 * a2 - 9 * b) + 27 * c) * inv54;
         double r2 = r * r;
 	    double q3 = q * q * q;
 
         if (r2 < q3)
         {
-            double t = r / Math.Sqrt(q3);
+            double sqq = Math.Sqrt(q);
+
+            double t = r / (sqq * sqq * sqq);
             if (t < -1) t = -1;
             else if (t > 1) t = 1;
 
             t = Math.Acos(t);
 
             a *= inv3;
-            q = -2 * Math.Sqrt(q);
+            q = -2 * sqq;
 
-            result[0] = q * Math.Cos(t * inv3) - a;
-            result[1] = q * Math.Cos((t + MathHelperD.TwoPi) * inv3) - a;
-            result[2] = q * Math.Cos((t - MathHelperD.TwoPi) * inv3) - a;
+            double costv3 = Math.Cos(t * inv3);
+            double sintv3 = Math.Sin(t * inv3);
+
+            result[0] = q * costv3 - a;
+            result[1] = q * ((costv3 * cos120d) - (sintv3 * sin120d)) - a;
+            result[2] = q * ((costv3 * cos120d) + (sintv3 * sin120d)) - a;
 
             return true;
         }
