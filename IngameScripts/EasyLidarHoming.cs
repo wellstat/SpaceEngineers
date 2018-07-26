@@ -3704,14 +3704,14 @@ List<IMyTerminalBlock> GetBlocksWithName<T>(string name, int matchType = 0) wher
 
 public class GyroControl
 {
-    static Action<IMyGyro, float> PosYaw = (g, v) => { g.Yaw = v; };
     static Action<IMyGyro, float> NegYaw = (g, v) => { g.Yaw = -v; };
-    static Action<IMyGyro, float> PosPitch = (g, v) => { g.Pitch = v; };
+    static Action<IMyGyro, float> PosYaw = (g, v) => { g.Yaw = v; };
     static Action<IMyGyro, float> NegPitch = (g, v) => { g.Pitch = -v; };
-    static Action<IMyGyro, float> PosRoll = (g, v) => { g.Roll = v; };
+    static Action<IMyGyro, float> PosPitch = (g, v) => { g.Pitch = v; };
     static Action<IMyGyro, float> NegRoll = (g, v) => { g.Roll = -v; };
+    static Action<IMyGyro, float> PosRoll = (g, v) => { g.Roll = v; };
 
-    Action<IMyGyro, float>[] profiles = {PosYaw,NegYaw,PosPitch,NegPitch,PosRoll,NegRoll};
+    Action<IMyGyro, float>[] profiles = {NegYaw,PosYaw,NegPitch,PosPitch,NegRoll,PosRoll};
 
     List<IMyGyro> gyros;
 
@@ -3752,9 +3752,9 @@ public class GyroControl
         switch (dir)
         {
             case Base6Directions.Direction.Up:
-                return 0;
-            case Base6Directions.Direction.Down:
                 return 1;
+            case Base6Directions.Direction.Down:
+                return 0;
             case Base6Directions.Direction.Left:
                 return 2;
             case Base6Directions.Direction.Right:
