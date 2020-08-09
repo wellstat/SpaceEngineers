@@ -73,6 +73,7 @@ public class GeneralSettings
 	public double MinTargetSizeEngage = 2;
 	public double MinTargetSizePriority = 4;
 
+	public bool AutoMissileLaunch = true;
 	public double MissileMinTargetSize = 12;
 	public double MissileCountPerSize = 36;
 
@@ -739,6 +740,7 @@ void InitConfiguration()
 				settings.MinTargetSizeEngage = iniConfig.Get(INI_SECTION, "MinTargetSizeEngage").ToDouble(settings.MinTargetSizeEngage);
 				settings.MinTargetSizePriority = iniConfig.Get(INI_SECTION, "MinTargetSizePriority").ToDouble(settings.MinTargetSizePriority);
 
+				settings.AutoMissileLaunch = iniConfig.Get(INI_SECTION, "AutoMissileLaunch").ToBoolean(settings.AutoMissileLaunch);
 				settings.MissileMinTargetSize = iniConfig.Get(INI_SECTION, "MissileMinTargetSize").ToDouble(settings.MissileMinTargetSize);
 				settings.MissileCountPerSize = iniConfig.Get(INI_SECTION, "MissileCountPerSize").ToDouble(settings.MissileCountPerSize);
 
@@ -2041,19 +2043,22 @@ void ProcessCommands(string arguments)
 
 void LaunchAutomaticMissiles()
 {
-	if (targetManager.Count() > 0)
+	if (settings.AutoMissileLaunch)
 	{
-		PDCTarget target = targetManager.GetOldestRaycastUpdatedTarget();
-		if (target != null)
+		if (targetManager.Count() > 0)
 		{
-			if (target.MissileRemainingCount > 0 && targetManager.TargetExists(target.EntityId))
+			PDCTarget target = targetManager.GetOldestRaycastUpdatedTarget();
+			if (target != null)
 			{
-				target.MissileRemainingCount--;
+				if (target.MissileRemainingCount > 0 && targetManager.TargetExists(target.EntityId))
+				{
+					target.MissileRemainingCount--;
 
-				bool useOffsetTargeting = (target.MissileRemainingCount <= 0 ? true : (rnd.NextDouble() <= settings.MissileOffsetProbability));
-				LaunchMissileForTarget(target, useOffsetTargeting);
+					bool useOffsetTargeting = (target.MissileRemainingCount <= 0 ? true : (rnd.NextDouble() <= settings.MissileOffsetProbability));
+					LaunchMissileForTarget(target, useOffsetTargeting);
 
-				nextAutoMissileLaunchClock = clock + settings.MissileStaggerWaitTicks;
+					nextAutoMissileLaunchClock = clock + settings.MissileStaggerWaitTicks;
+				}
 			}
 		}
 	}
