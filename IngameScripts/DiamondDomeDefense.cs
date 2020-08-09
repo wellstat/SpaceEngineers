@@ -22,11 +22,11 @@ namespace DiamondDomeDefense
 //----------------------------------------------------------------------------------------------------
 #region Script
 //------------------------------------------------------------
-// ADN - Diamond Dome Defense Script v5.1
+// ADN - Diamond Dome Defense Script v5.2
 //------------------------------------------------------------
 
 //------------------ Default Settings ------------------
-#region General Settings
+#region Default Settings
 public class GeneralSettings
 {
 	public int MainBlocksReloadTicks = 600;
@@ -507,6 +507,8 @@ public void Main(string args, UpdateType updateType)
 	profiler.UpdateComplexity();
 }
 
+#region Initialization
+
 void ForceJITCompilation()
 {
 	try
@@ -586,28 +588,6 @@ bool InitLoop()
 			remote.SpeedLimit = currentValue;
 		}
 
-		raycastHandler = new RaycastHandler(new List<IMyCameraBlock>(0));
-		
-		targetManager = new TargetManager();
-
-		allyManager = new AllyManager();
-
-		sortedEntityIds = new SortedDictionary<double, PDCTarget>();
-
-		ReloadMainBlocks();
-
-		ReloadMissilesAndTorpedos();
-
-		guidanceCommsTargets = new Queue<MissileCommsTarget>();
-		tracksCommsTargets = new Queue<PDCTarget>();
-
-		settings.ManualAimRaycastDistance = Math.Min(Math.Max(settings.ManualAimRaycastDistance, 1000), 100000);
-
-		igcTargetTracksListener = IGC.RegisterBroadcastListener(IGC_MSG_TARGET_TRACKS);
-		igcTracksInfoListener = IGC.RegisterBroadcastListener(IGC_MSG_TRACKS_INFO);
-
-		shipRadius = Me.CubeGrid.WorldAABB.HalfExtents.Length();
-
 		if (settings.CheckSelfOcclusion)
 		{
 			List<IMyTerminalBlock> blocks = new List<IMyTerminalBlock>();
@@ -649,14 +629,35 @@ bool InitLoop()
 
 				occlusionChecker = cubeExistsChecker;
 
-				foreach (PDCTurret pdc in pdcList)
-				{
-					pdc.GridClearanceCheck = occlusionChecker;
-				}
-
 				subMode = 2;
 			}
 		}
+		else
+		{
+			occlusionChecker = null;
+		}
+
+		raycastHandler = new RaycastHandler(new List<IMyCameraBlock>(0));
+		
+		targetManager = new TargetManager();
+
+		allyManager = new AllyManager();
+
+		sortedEntityIds = new SortedDictionary<double, PDCTarget>();
+
+		ReloadMainBlocks();
+
+		ReloadMissilesAndTorpedos();
+
+		guidanceCommsTargets = new Queue<MissileCommsTarget>();
+		tracksCommsTargets = new Queue<PDCTarget>();
+
+		settings.ManualAimRaycastDistance = Math.Min(Math.Max(settings.ManualAimRaycastDistance, 1000), 100000);
+
+		igcTargetTracksListener = IGC.RegisterBroadcastListener(IGC_MSG_TARGET_TRACKS);
+		igcTracksInfoListener = IGC.RegisterBroadcastListener(IGC_MSG_TRACKS_INFO);
+
+		shipRadius = Me.CubeGrid.WorldAABB.HalfExtents.Length();
 
 		ForceJITCompilation();
 	}
@@ -674,11 +675,6 @@ bool InitLoop()
 
 			iterOcclusionCreator.Dispose();
 			iterOcclusionCreator = null;
-
-			foreach (PDCTurret pdc in pdcList)
-			{
-				pdc.GridClearanceCheck = occlusionChecker;
-			}
 
 			subMode = 2;
 		}
@@ -799,19 +795,15 @@ void ReloadMainBlocks()
 
 void CompileDesignators()
 {
-	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
-	List<Designator> newDesignators = new List<Designator>();
-	GridTerminalSystem.GetBlockGroups(groups, (b) => { return b.Name.IndexOf(DESIGNATOR_GRP_TAG, StringComparison.OrdinalIgnoreCase) > -1; });
-	foreach (IMyBlockGroup group in groups)
+	List<IMyLargeTurretBase> turrets;
+	GetBlocksFromGroups(out turrets, DESIGNATOR_GRP_TAG);
+	
+	List<Designator> newDesignators = new List<Designator>(turrets.Count);
+	foreach (IMyLargeTurretBase turret in turrets)
 	{
-		group.GetBlocksOfType<IMyLargeTurretBase>(dummyBlocks, (block) =>
-		{
-			Designator designator = new Designator(block as IMyLargeTurretBase);
-			newDesignators.Add(designator);
-			return false;
-		});
-		break;
+		newDesignators.Add(new Designator(turret));
 	}
+
 	designators = newDesignators;
 	designatorTargetRR = new RoundRobin<Designator>(newDesignators, FuncDesignatorHasTarget);
 	designatorOperationRR = new RoundRobin<Designator>(newDesignators, FuncDesignatorIsWorking);
@@ -819,14 +811,9 @@ void CompileDesignators()
 
 void CompileRaycastCameras()
 {
-	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
-	List<IMyCameraBlock> newRaycastCameras = new List<IMyCameraBlock>();
-	GridTerminalSystem.GetBlockGroups(groups, (b) => { return b.Name.IndexOf(RAYCAST_CAMERA_GRP_TAG, StringComparison.OrdinalIgnoreCase) > -1; });
-	foreach (IMyBlockGroup group in groups)
-	{
-		group.GetBlocksOfType(newRaycastCameras, (b) => { b.EnableRaycast = true; b.Enabled = true; return true; });
-		break;
-	}
+	List<IMyCameraBlock> newRaycastCameras;
+	GetBlocksFromGroups(out newRaycastCameras, RAYCAST_CAMERA_GRP_TAG, (b) => { b.EnableRaycast = true; b.Enabled = true; return true; });
+
 	raycastCameras = newRaycastCameras;
 	raycastHandler.Cameras = raycastCameras;
 }
@@ -1057,6 +1044,8 @@ void CompilePDCGroups()
 		pdc.TargetedCountGainPerHit = targetedCountGainPerHit;
 		pdc.ReloadMaxAngleRadians =  MathHelperD.ToRadians(settings.ReloadMaxAngle);
 		pdc.ReloadLockStateAngleRadians =  MathHelperD.ToRadians(settings.ReloadLockStateAngle);
+
+		pdc.GridClearanceCheck = occlusionChecker;
 	}
 
 	pdcList = newPDCList;
@@ -1183,326 +1172,12 @@ void CompileManualTargeters()
 
 void CompileDisplayPanels()
 {
-	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
-	displayPanels = new List<IMyTextSurface>();
-	GridTerminalSystem.GetBlockGroups(groups, (b) => { return b.Name.IndexOf(DISPLAY_GRP_TAG, StringComparison.OrdinalIgnoreCase) > -1; });
-	foreach (IMyBlockGroup group in groups)
-	{
-		group.GetBlocksOfType(displayPanels, (b) =>
-		{
-			return true;
-		});
-		break;
-	}
+	GetBlocksFromGroups(out displayPanels, DISPLAY_GRP_TAG);
 }
 
-void ReloadMissilesAndTorpedos()
-{
-	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
+#endregion
 
-	missileComputers = new List<IMyProgrammableBlock>();
-	GridTerminalSystem.GetBlockGroups(groups, (b) => { return NameContains(b, MISSILE_PB_GRP_TAG); });
-	foreach (IMyBlockGroup group in groups)
-	{
-		group.GetBlocksOfType(missileComputers, (b) =>
-		{
-			if (b.Enabled && Me.IsSameConstructAs(b))
-			{
-				return AGMChecker.CheckSave(b);
-			}
-			else
-			{
-				return false;
-			}
-		});
-		break;
-	}
-
-	groups.Clear();
-	torpedoComputers = new List<IMyProgrammableBlock>();
-	GridTerminalSystem.GetBlockGroups(groups, (b) => { return NameContains(b, TORPEDO_PB_GRP_TAG); });
-	foreach (IMyBlockGroup group in groups)
-	{
-		group.GetBlocksOfType(torpedoComputers, (b) =>
-		{
-			if (b.Enabled && Me.IsSameConstructAs(b))
-			{
-				return AGMChecker.CheckSave(b);
-			}
-			else
-			{
-				return false;
-			}
-		});
-		break;
-	}
-}
-
-void ProcessCommsMessage()
-{
-	while (igcTargetTracksListener.HasPendingMessage)
-	{
-		object data = igcTargetTracksListener.AcceptMessage().Data;
-		if (data is MyTuple<long, long, Vector3D, Vector3D, double>)
-		{
-			//[Notes] TargetTracksData(SenderId, TargetEntityId, TargetPosition, TargetVelocity, TargetSizeSq) => MyTuple<long, long, Vector3D, Vector3D, double>
-			MyTuple<long, long, Vector3D, Vector3D, double> targetTracksData = (MyTuple<long, long, Vector3D, Vector3D, double>)data;
-			if (!targetManager.TargetExists(targetTracksData.Item2) || clock - targetManager.GetTarget(targetTracksData.Item2).LastDetectedClock >= settings.TargetSlippedTicks)
-			{
-				TargetData targetData = new TargetData();
-				targetData.EntityId = targetTracksData.Item2;
-				targetData.Position = targetTracksData.Item3;
-				targetData.Velocity = targetTracksData.Item4;
-				targetManager.UpdateTarget(targetData, clock - 1, false);
-
-				if (targetTracksData.Item5 > 0)
-				{
-					PDCTarget target = targetManager.GetTarget(targetData.EntityId);
-					if (target != null && target.TargetSizeSq == 0)
-					{
-						target.TargetSizeSq = targetTracksData.Item5;
-					}
-				}
-			}
-		}
-	}
-
-	while (igcTracksInfoListener.HasPendingMessage)
-	{
-		object data = igcTracksInfoListener.AcceptMessage().Data;
-		if (data is MyTuple<long, long, Vector3D, Vector3D, double>)
-		{
-			//[Notes] TargetTracksData(TargetEntityId, TargetPosition, TargetVelocity, TargetSizeSq, Flags[IsFriendly,IsLargeGrid], Timestamp) => MyTuple<long, Vector3D, Vector3D, double, int, long>
-			MyTuple<long, Vector3D, Vector3D, double, int, long> tracksInfoData = (MyTuple<long, Vector3D, Vector3D, double, int, long>)data;
-			if (!targetManager.TargetExists(tracksInfoData.Item1) || clock - targetManager.GetTarget(tracksInfoData.Item1).LastDetectedClock >= settings.TargetSlippedTicks)
-			{
-				if ((tracksInfoData.Item5 & (int)TrackTypeEnum.IsFriendly) == 0)
-				{
-					TargetData targetData = new TargetData();
-					targetData.EntityId = tracksInfoData.Item1;
-					targetData.Position = tracksInfoData.Item2;
-					targetData.Velocity = tracksInfoData.Item3;
-
-					targetManager.UpdateTarget(targetData, clock - 1, false);
-
-					if (tracksInfoData.Item4 > 0)
-					{
-						PDCTarget target = targetManager.GetTarget(targetData.EntityId);
-						if (target != null)
-						{
-							if (target.TargetSizeSq == 0)
-							{
-								target.TargetSizeSq = tracksInfoData.Item4;
-							}
-
-							target.IsLargeGrid = (tracksInfoData.Item5 & (int)TrackTypeEnum.IsLargeGrid) > 0;
-						}
-					}
-				}
-				else
-				{
-					AllyTrack ally = new AllyTrack(tracksInfoData.Item1);
-					ally.Position = tracksInfoData.Item2;
-					ally.Velocity = tracksInfoData.Item3;
-					ally.SizeSq = tracksInfoData.Item4;
-					ally.IsLargeGrid = (tracksInfoData.Item5 & (int)TrackTypeEnum.IsLargeGrid) > 0;
-					
-					allyManager.UpdateAlly(ally, clock);
-				}
-			}
-		}
-	}
-}
-
-void ProcessCommands(string arguments)
-{
-	string[] tokens = arguments.Split(splitDelimiterCommand, StringSplitOptions.RemoveEmptyEntries);
-	if (tokens.Length == 0) return;
-
-	string command = tokens[0].Trim().ToUpper();
-
-	ManualPDCTarget manualTarget = null;
-
-	if (command.StartsWith(MANUAL_AIMING_GRP_PREFIX, StringComparison.OrdinalIgnoreCase))
-	{
-		int codeId;
-		if (command.Length == MANUAL_AIMING_GRP_PREFIX.Length)
-		{
-			codeId = 1;
-		}
-		else if (!int.TryParse(command.Substring(MANUAL_AIMING_GRP_PREFIX.Length).Trim(), out codeId))
-		{
-			codeId = 0;
-		}
-
-		if (codeId >= 1 && manualTargetersLookup.ContainsKey(MANUAL_AIMING_GRP_PREFIX + codeId))
-		{
-			manualTarget = manualTargetersLookup[MANUAL_AIMING_GRP_PREFIX + codeId];
-		}
-
-		if (manualTarget != null && tokens.Length <= 1)
-		{
-			return;
-		}
-	}
-
-	if (manualTarget != null)
-	{
-		command = tokens[1].Trim().ToUpper();
-	}
-	else if (manualTargeters?.Count > 0)
-	{
-		manualTarget = manualTargeters[0];
-	}
-
-	switch (command)
-	{
-	case MANUAL_LAUNCH_CMD:
-		bool useTorpedo = TokenContainsMatch(tokens, MANUAL_LAUNCH_TORPEDO_TAG);
-		List<IMyProgrammableBlock> guidanceComputers = (useTorpedo ? torpedoComputers : missileComputers);
-
-		if (TokenContainsMatch(tokens, MANUAL_LAUNCH_LARGEST_TAG))
-		{
-			PDCTarget largestTarget = targetManager.FindLargestTarget();
-			if (largestTarget != null)
-			{
-				LaunchManualForTarget(guidanceComputers, largestTarget, manualTarget?.TargetingPointType ?? TargetingPointTypeEnum.Center, manualTarget?.OffsetPoint, useTorpedo);
-			}
-		}
-		else if (manualTarget != null)
-		{
-			bool useExtendedMissileDistance = TokenContainsMatch(tokens, MANUAL_LAUNCH_EXTENDED_TAG);
-
-			if (manualTarget.SelectedEntityId > 0 && targetManager.TargetExists(manualTarget.SelectedEntityId))
-			{
-				PDCTarget currentTarget = targetManager.GetTarget(manualTarget.SelectedEntityId);
-				if (currentTarget != null)
-				{
-					if (useExtendedMissileDistance)
-					{
-						currentTarget.MaxAllowedMissileLaunchDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance);
-					}
-					LaunchManualForTarget(guidanceComputers, currentTarget, manualTarget.TargetingPointType, manualTarget.OffsetPoint, useTorpedo);
-				}
-			}
-			else
-			{
-				manualTarget.Enabled = true;
-				manualTarget.SelectedEntityId = -1;
-				manualTarget.OffsetPoint = Vector3D.Zero;
-				manualTarget.Position = manualTarget.AimingBlock.WorldMatrix.Translation + (manualTarget.GetForwardViewDirection() * manualTarget.MaxManualRaycastDistance);
-				manualTarget.MaxAllowedRaycastDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxRaycastTrackingDistance);
-				manualTarget.MaxAllowedMissileLaunchDistance = (useExtendedMissileDistance ? Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance) : 0);
-
-				LaunchManualForTarget(guidanceComputers, manualTarget, manualTarget.TargetingPointType, manualTarget.OffsetPoint, useTorpedo);
-			}
-		}
-		break;
-	case MANUAL_AIM_TRACK_TAG:
-		if (manualTarget != null)
-		{
-			if (manualTarget.Enabled && manualTarget.SelectedEntityId == -1)
-			{
-				manualTarget.Enabled = false;
-				manualTarget.OffsetPoint = Vector3D.Zero;
-			}
-			else
-			{
-				bool useExtendedMissileDistance = TokenContainsMatch(tokens, MANUAL_LAUNCH_EXTENDED_TAG);
-
-				manualTarget.Enabled = true;
-				manualTarget.SelectedEntityId = -1;
-				manualTarget.OffsetPoint = Vector3D.Zero;
-				manualTarget.Position = manualTarget.AimingBlock.WorldMatrix.Translation + (manualTarget.GetForwardViewDirection() * manualTarget.MaxManualRaycastDistance);
-				manualTarget.MaxAllowedRaycastDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxRaycastTrackingDistance);
-				manualTarget.MaxAllowedMissileLaunchDistance = (useExtendedMissileDistance ? Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance) : 0);
-			}
-		}
-		break;
-	case MANUAL_AIM_RELEASE_TAG:
-		if (manualTarget != null)
-		{
-			manualTarget.Enabled = false;
-			manualTarget.SelectedEntityId = -1;
-			manualTarget.OffsetPoint = Vector3D.Zero;
-		}
-		break;
-	case MANUAL_AIM_VALUE_SET_TAG:
-		if (manualTarget != null && tokens.Length >= 3)
-		{
-			switch (tokens[2].ToUpper().Trim())
-			{
-			case MANUAL_AIM_VALUE_SET_CENTER_TAG:
-				manualTarget.TargetingPointType = TargetingPointTypeEnum.Center;
-				break;
-			case MANUAL_AIM_VALUE_SET_OFFSET_TAG:
-				manualTarget.TargetingPointType = TargetingPointTypeEnum.Offset;
-				break;
-			case MANUAL_AIM_VALUE_SET_RANDOM_TAG:
-				manualTarget.TargetingPointType = TargetingPointTypeEnum.Random;
-				break;
-			case MANUAL_AIM_VALUE_SET_RANGE_TAG:
-				if (tokens.Length >= 4)
-				{
-					double value;
-					if (double.TryParse(tokens[3].Trim(), out value))
-					{
-						manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(value, 1000), 100000);;
-					}
-				}
-				break;
-			}
-		}
-		break;
-	case MANUAL_AIM_VALUE_CYCLE_OFFSET_TAG:
-		if (manualTarget != null)
-		{
-			manualTarget.TargetingPointType = (TargetingPointTypeEnum)(((int)manualTarget.TargetingPointType + 1) % 3);
-		}
-		break;
-	case MANUAL_AIM_VALUE_INC_RANGE_TAG:
-		if (manualTarget != null)
-		{
-			manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(manualTarget.MaxManualRaycastDistance + 1000, 1000), 100000);;
-		}
-		break;
-	case MANUAL_AIM_VALUE_DEC_RANGE_TAG:
-		if (manualTarget != null)
-		{
-			manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(manualTarget.MaxManualRaycastDistance - 1000, 1000), 100000);;
-		}
-		break;
-	case CMD_TOGGLE_ON_OFF:
-		switchedOn = !switchedOn;
-
-		if (!switchedOn)
-		{
-			foreach (PDCTurret pdc in pdcList)
-			{
-				pdc.TargetInfo = null;
-				pdc.ReleaseWeapons(true);
-				pdc.ResetRotors();
-			}
-		}
-		break;
-	case CMD_TOGGLE_ON:
-		switchedOn = true;
-		break;
-	case CMD_TOGGLE_OFF:
-		switchedOn = false;
-
-		foreach (PDCTurret pdc in pdcList)
-		{
-			pdc.TargetInfo = null;
-			pdc.ReleaseWeapons(true);
-			pdc.ResetRotors();
-		}
-		break;
-	case CMD_DEBUG_MODE:
-		debugMode = !debugMode;
-		break;
-	}
-}
+#region Main Processing
 
 void UpdateManualAimRaycast()
 {
@@ -2048,6 +1723,322 @@ void AimFireReloadPDC()
 	}
 }
 
+#endregion
+
+#region Misc Processing
+
+void ReloadMissilesAndTorpedos()
+{
+	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
+
+	missileComputers = new List<IMyProgrammableBlock>();
+	GridTerminalSystem.GetBlockGroups(groups, (b) => { return NameContains(b, MISSILE_PB_GRP_TAG); });
+	foreach (IMyBlockGroup group in groups)
+	{
+		group.GetBlocksOfType(missileComputers, (b) =>
+		{
+			if (b.Enabled && Me.IsSameConstructAs(b))
+			{
+				return AGMChecker.CheckSave(b);
+			}
+			else
+			{
+				return false;
+			}
+		});
+		break;
+	}
+
+	groups.Clear();
+	torpedoComputers = new List<IMyProgrammableBlock>();
+	GridTerminalSystem.GetBlockGroups(groups, (b) => { return NameContains(b, TORPEDO_PB_GRP_TAG); });
+	foreach (IMyBlockGroup group in groups)
+	{
+		group.GetBlocksOfType(torpedoComputers, (b) =>
+		{
+			if (b.Enabled && Me.IsSameConstructAs(b))
+			{
+				return AGMChecker.CheckSave(b);
+			}
+			else
+			{
+				return false;
+			}
+		});
+		break;
+	}
+}
+
+void ProcessCommsMessage()
+{
+	while (igcTargetTracksListener.HasPendingMessage)
+	{
+		object data = igcTargetTracksListener.AcceptMessage().Data;
+		if (data is MyTuple<long, long, Vector3D, Vector3D, double>)
+		{
+			//[Notes] TargetTracksData(SenderId, TargetEntityId, TargetPosition, TargetVelocity, TargetSizeSq) => MyTuple<long, long, Vector3D, Vector3D, double>
+			MyTuple<long, long, Vector3D, Vector3D, double> targetTracksData = (MyTuple<long, long, Vector3D, Vector3D, double>)data;
+			if (!targetManager.TargetExists(targetTracksData.Item2) || clock - targetManager.GetTarget(targetTracksData.Item2).LastDetectedClock >= settings.TargetSlippedTicks)
+			{
+				TargetData targetData = new TargetData();
+				targetData.EntityId = targetTracksData.Item2;
+				targetData.Position = targetTracksData.Item3;
+				targetData.Velocity = targetTracksData.Item4;
+				targetManager.UpdateTarget(targetData, clock - 1, false);
+
+				if (targetTracksData.Item5 > 0)
+				{
+					PDCTarget target = targetManager.GetTarget(targetData.EntityId);
+					if (target != null && target.TargetSizeSq == 0)
+					{
+						target.TargetSizeSq = targetTracksData.Item5;
+					}
+				}
+			}
+		}
+	}
+
+	while (igcTracksInfoListener.HasPendingMessage)
+	{
+		object data = igcTracksInfoListener.AcceptMessage().Data;
+		if (data is MyTuple<long, long, Vector3D, Vector3D, double>)
+		{
+			//[Notes] TargetTracksData(TargetEntityId, TargetPosition, TargetVelocity, TargetSizeSq, Flags[IsFriendly,IsLargeGrid], Timestamp) => MyTuple<long, Vector3D, Vector3D, double, int, long>
+			MyTuple<long, Vector3D, Vector3D, double, int, long> tracksInfoData = (MyTuple<long, Vector3D, Vector3D, double, int, long>)data;
+			if (!targetManager.TargetExists(tracksInfoData.Item1) || clock - targetManager.GetTarget(tracksInfoData.Item1).LastDetectedClock >= settings.TargetSlippedTicks)
+			{
+				if ((tracksInfoData.Item5 & (int)TrackTypeEnum.IsFriendly) == 0)
+				{
+					TargetData targetData = new TargetData();
+					targetData.EntityId = tracksInfoData.Item1;
+					targetData.Position = tracksInfoData.Item2;
+					targetData.Velocity = tracksInfoData.Item3;
+
+					targetManager.UpdateTarget(targetData, clock - 1, false);
+
+					if (tracksInfoData.Item4 > 0)
+					{
+						PDCTarget target = targetManager.GetTarget(targetData.EntityId);
+						if (target != null)
+						{
+							if (target.TargetSizeSq == 0)
+							{
+								target.TargetSizeSq = tracksInfoData.Item4;
+							}
+
+							target.IsLargeGrid = (tracksInfoData.Item5 & (int)TrackTypeEnum.IsLargeGrid) > 0;
+						}
+					}
+				}
+				else
+				{
+					AllyTrack ally = new AllyTrack(tracksInfoData.Item1);
+					ally.Position = tracksInfoData.Item2;
+					ally.Velocity = tracksInfoData.Item3;
+					ally.SizeSq = tracksInfoData.Item4;
+					ally.IsLargeGrid = (tracksInfoData.Item5 & (int)TrackTypeEnum.IsLargeGrid) > 0;
+					
+					allyManager.UpdateAlly(ally, clock);
+				}
+			}
+		}
+	}
+}
+
+void ProcessCommands(string arguments)
+{
+	string[] tokens = arguments.Split(splitDelimiterCommand, StringSplitOptions.RemoveEmptyEntries);
+	if (tokens.Length == 0) return;
+
+	string command = tokens[0].Trim().ToUpper();
+
+	ManualPDCTarget manualTarget = null;
+
+	if (command.StartsWith(MANUAL_AIMING_GRP_PREFIX, StringComparison.OrdinalIgnoreCase))
+	{
+		int codeId;
+		if (command.Length == MANUAL_AIMING_GRP_PREFIX.Length)
+		{
+			codeId = 1;
+		}
+		else if (!int.TryParse(command.Substring(MANUAL_AIMING_GRP_PREFIX.Length).Trim(), out codeId))
+		{
+			codeId = 0;
+		}
+
+		if (codeId >= 1 && manualTargetersLookup.ContainsKey(MANUAL_AIMING_GRP_PREFIX + codeId))
+		{
+			manualTarget = manualTargetersLookup[MANUAL_AIMING_GRP_PREFIX + codeId];
+		}
+
+		if (manualTarget != null && tokens.Length <= 1)
+		{
+			return;
+		}
+	}
+
+	if (manualTarget != null)
+	{
+		command = tokens[1].Trim().ToUpper();
+	}
+	else if (manualTargeters?.Count > 0)
+	{
+		manualTarget = manualTargeters[0];
+	}
+
+	switch (command)
+	{
+	case MANUAL_LAUNCH_CMD:
+		bool useTorpedo = TokenContainsMatch(tokens, MANUAL_LAUNCH_TORPEDO_TAG);
+		List<IMyProgrammableBlock> guidanceComputers = (useTorpedo ? torpedoComputers : missileComputers);
+
+		if (TokenContainsMatch(tokens, MANUAL_LAUNCH_LARGEST_TAG))
+		{
+			PDCTarget largestTarget = targetManager.FindLargestTarget();
+			if (largestTarget != null)
+			{
+				LaunchManualForTarget(guidanceComputers, largestTarget, manualTarget?.TargetingPointType ?? TargetingPointTypeEnum.Center, manualTarget?.OffsetPoint, useTorpedo);
+			}
+		}
+		else if (manualTarget != null)
+		{
+			bool useExtendedMissileDistance = TokenContainsMatch(tokens, MANUAL_LAUNCH_EXTENDED_TAG);
+
+			if (manualTarget.SelectedEntityId > 0 && targetManager.TargetExists(manualTarget.SelectedEntityId))
+			{
+				PDCTarget currentTarget = targetManager.GetTarget(manualTarget.SelectedEntityId);
+				if (currentTarget != null)
+				{
+					if (useExtendedMissileDistance)
+					{
+						currentTarget.MaxAllowedMissileLaunchDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance);
+					}
+					LaunchManualForTarget(guidanceComputers, currentTarget, manualTarget.TargetingPointType, manualTarget.OffsetPoint, useTorpedo);
+				}
+			}
+			else
+			{
+				manualTarget.Enabled = true;
+				manualTarget.SelectedEntityId = -1;
+				manualTarget.OffsetPoint = Vector3D.Zero;
+				manualTarget.Position = manualTarget.AimingBlock.WorldMatrix.Translation + (manualTarget.GetForwardViewDirection() * manualTarget.MaxManualRaycastDistance);
+				manualTarget.MaxAllowedRaycastDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxRaycastTrackingDistance);
+				manualTarget.MaxAllowedMissileLaunchDistance = (useExtendedMissileDistance ? Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance) : 0);
+
+				LaunchManualForTarget(guidanceComputers, manualTarget, manualTarget.TargetingPointType, manualTarget.OffsetPoint, useTorpedo);
+			}
+		}
+		break;
+	case MANUAL_AIM_TRACK_TAG:
+		if (manualTarget != null)
+		{
+			if (manualTarget.Enabled && manualTarget.SelectedEntityId == -1)
+			{
+				manualTarget.Enabled = false;
+				manualTarget.OffsetPoint = Vector3D.Zero;
+			}
+			else
+			{
+				bool useExtendedMissileDistance = TokenContainsMatch(tokens, MANUAL_LAUNCH_EXTENDED_TAG);
+
+				manualTarget.Enabled = true;
+				manualTarget.SelectedEntityId = -1;
+				manualTarget.OffsetPoint = Vector3D.Zero;
+				manualTarget.Position = manualTarget.AimingBlock.WorldMatrix.Translation + (manualTarget.GetForwardViewDirection() * manualTarget.MaxManualRaycastDistance);
+				manualTarget.MaxAllowedRaycastDistance = Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxRaycastTrackingDistance);
+				manualTarget.MaxAllowedMissileLaunchDistance = (useExtendedMissileDistance ? Math.Max(manualTarget.MaxManualRaycastDistance, settings.MaxMissileLaunchDistance) : 0);
+			}
+		}
+		break;
+	case MANUAL_AIM_RELEASE_TAG:
+		if (manualTarget != null)
+		{
+			manualTarget.Enabled = false;
+			manualTarget.SelectedEntityId = -1;
+			manualTarget.OffsetPoint = Vector3D.Zero;
+		}
+		break;
+	case MANUAL_AIM_VALUE_SET_TAG:
+		if (manualTarget != null && tokens.Length >= 3)
+		{
+			switch (tokens[2].ToUpper().Trim())
+			{
+			case MANUAL_AIM_VALUE_SET_CENTER_TAG:
+				manualTarget.TargetingPointType = TargetingPointTypeEnum.Center;
+				break;
+			case MANUAL_AIM_VALUE_SET_OFFSET_TAG:
+				manualTarget.TargetingPointType = TargetingPointTypeEnum.Offset;
+				break;
+			case MANUAL_AIM_VALUE_SET_RANDOM_TAG:
+				manualTarget.TargetingPointType = TargetingPointTypeEnum.Random;
+				break;
+			case MANUAL_AIM_VALUE_SET_RANGE_TAG:
+				if (tokens.Length >= 4)
+				{
+					double value;
+					if (double.TryParse(tokens[3].Trim(), out value))
+					{
+						manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(value, 1000), 100000);;
+					}
+				}
+				break;
+			}
+		}
+		break;
+	case MANUAL_AIM_VALUE_CYCLE_OFFSET_TAG:
+		if (manualTarget != null)
+		{
+			manualTarget.TargetingPointType = (TargetingPointTypeEnum)(((int)manualTarget.TargetingPointType + 1) % 3);
+		}
+		break;
+	case MANUAL_AIM_VALUE_INC_RANGE_TAG:
+		if (manualTarget != null)
+		{
+			manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(manualTarget.MaxManualRaycastDistance + 1000, 1000), 100000);;
+		}
+		break;
+	case MANUAL_AIM_VALUE_DEC_RANGE_TAG:
+		if (manualTarget != null)
+		{
+			manualTarget.MaxManualRaycastDistance = Math.Min(Math.Max(manualTarget.MaxManualRaycastDistance - 1000, 1000), 100000);;
+		}
+		break;
+	case CMD_TOGGLE_ON_OFF:
+		switchedOn = !switchedOn;
+
+		if (!switchedOn)
+		{
+			foreach (PDCTurret pdc in pdcList)
+			{
+				pdc.TargetInfo = null;
+				pdc.ReleaseWeapons(true);
+				pdc.ResetRotors();
+			}
+		}
+		break;
+	case CMD_TOGGLE_ON:
+		switchedOn = true;
+		break;
+	case CMD_TOGGLE_OFF:
+		switchedOn = false;
+
+		foreach (PDCTurret pdc in pdcList)
+		{
+			pdc.TargetInfo = null;
+			pdc.ReleaseWeapons(true);
+			pdc.ResetRotors();
+		}
+		break;
+	case CMD_DEBUG_MODE:
+		debugMode = !debugMode;
+		break;
+	}
+}
+
+#endregion
+
+#region Missile Launch
+
 void LaunchAutomaticMissiles()
 {
 	if (targetManager.Count() > 0)
@@ -2223,6 +2214,10 @@ void LaunchManualForTarget(List<IMyProgrammableBlock> guidanceComputers, PDCTarg
 	}
 }
 
+#endregion
+
+#region IGC Transmission
+
 void TransmitIGCMessages()
 {
 	haveIGCTransmitted = false;
@@ -2370,6 +2365,10 @@ void TransmitMyShipInformation()
 		nextMyShipTranmissionClock = clock + settings.TargetTracksTransmitIntervalTicks;
 	}
 }
+
+#endregion
+
+#region Display Logic
 
 void RefreshDisplays()
 {
@@ -2519,6 +2518,8 @@ void DisplayStatus()
 	Echo(sb.ToString());
 }
 
+#endregion
+
 #region Helper Methods
 
 long GenerateUniqueId()
@@ -2606,6 +2607,28 @@ bool TokenContainsMatch(string[] tokens, string compare)
 		}
 	}
 	return false;
+}
+
+void GetBlocksFromGroups<T>(out List<T> result, string groupNameTag, Func<T, bool> collect = null) where T : class
+{
+	result = null;
+
+	List<IMyBlockGroup> groups = new List<IMyBlockGroup>();
+	GridTerminalSystem.GetBlockGroups(groups, (b) => { return b.Name.IndexOf(groupNameTag, StringComparison.OrdinalIgnoreCase) > -1; });
+	foreach (IMyBlockGroup group in groups)
+	{
+		List<T> blocks = new List<T>();
+		group.GetBlocksOfType(blocks, collect);
+		
+		if (result == null)
+		{
+			result = blocks;
+		}
+		else
+		{
+			result.AddList(blocks);
+		}
+	}
 }
 
 #endregion
