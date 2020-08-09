@@ -146,7 +146,7 @@ public class DefaultWeaponProfiles
 #endregion
 //------------------ Script Constants ------------------
 #region Script Constants
-const string DISPLAY_VERSION = "5.0";
+const string DISPLAY_VERSION = "5.2";
 const string DISPLAY_SCRIPT_NAME = "Diamond Dome";
 
 const string INI_SECTION = "DDS";
